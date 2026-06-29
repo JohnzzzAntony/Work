@@ -231,3 +231,36 @@ Stage Summary:
 - The email→task→reply AI differentiator works end-to-end: paste email → LLM extracts title/category/priority/summary + generates professional reply → admin reviews/edits → creates task + assigns → activity log captures the full history.
 - Sticky footer verified on all views. Dark mode works. Lint is 100% clean. Dev server running on port 3000, notif-service on port 3003.
 - Login credentials: admin@workflowhub.com / admin123 (full access) or john/asha/liz/raj @workflowhub.com / emp123 (employee, scoped view).
+
+---
+Task ID: 7
+Agent: main (orchestrator)
+Task: Replace demo tasks with 10 real tasks + add "Email Summary → Tasks" feature
+
+Work Log:
+- Rewrote scripts/seed.ts: removed all 12 demo tasks, added the 10 real pending tasks provided by the user. Each task has: correct category (Store Support for Inventory/BOM + POS; Web Development for Website Enhancement + Noon + NEYDO; Online Payments for Tabby x2 + Terminal Hardware; Website Core for Security Alert + SSL Renewal), correct priority (Urgent for Security Alert; High for Inventory/BOM, POS Machine, SSL Renewal; Medium for Tabby/Website Enhancement/Terminal; Low for Noon + NEYDO), full description with sub-tasks, source email text, due dates (including 11 July 2026 for SSL renewal), and balanced auto-assignment across the 4 employees (Asha 1, Raj 2, Liz 3, John 4).
+- Re-ran the seed: 10 tasks created, all assigned, activity logs + notifications generated.
+- Created src/lib/assign.ts: autoAssignForCategory(categoryId) — finds active employees with the category skill, picks the one with fewest open tasks (load balancing), tie-breaks alphabetically. Also resolveCategory(name) — maps an LLM-returned category name to a DB record with keyword fallback.
+- Created src/lib/due-date.ts: dueDateFromPriorityHelper() — shared due-date computation from priority + settings.
+- Added analyzeEmailSummary() to src/lib/email-service.ts: LLM prompt that parses a pasted multi-task email digest into a JSON array of {title, category, priority, description, dueDateHint}. Includes a naive fallback parser (splits on numbered headings) if the LLM fails.
+- Added types to src/lib/types.ts: ParsedTask, EmailSummaryAnalyzeRequest/Response, BulkCreateTaskInput.
+- Created POST /api/email/analyze-summary route: calls analyzeEmailSummary(), resolves categories, runs auto-assign, computes due dates, returns enriched ParsedTask[].
+- Created POST /api/tasks/bulk route: validates + creates multiple tasks in one call, auto-assigns each (when autoAssign !== false), creates activity logs + notifications per task.
+- Created src/components/views/email-summary-view.tsx: the new "Email Summary → Tasks" view. Two-step UX: (1) paste full email summary into a large textarea (with "Paste" clipboard button), (2) click "Analyze & Extract Tasks" → AI returns a reviewable list of editable task cards (each with title, category, priority, due date, assignee selectors + priority/category/assignee badges + full description textarea), (3) click "Create N Tasks" → bulk-creates on the board and navigates to Work Board.
+- Updated src/lib/store.ts: added 'email-summary' to ViewId union.
+- Updated src/components/app-shell.tsx: added FileStack icon import, added nav item "Email Summary → Tasks" (admin-only), added view case to ViewSwitcher.
+- Fixed icon error: FileScanText doesn't exist in this lucide-react version → switched to FileStack.
+
+Browser verification (agent-browser):
+- Logged in as admin → dashboard shows 10 real tasks across 4 categories (Online Payments 3, Website Core 2, Web Development 3, Store Support 2).
+- Navigated to "Email Summary → Tasks" → pasted the FULL email analysis the user provided (all 10 sections) → clicked "Analyze & Extract Tasks".
+- LLM correctly parsed ALL 10 tasks: each with correct title, category (auto-detected), priority (high/medium/low/urgent based on urgency language), full description with sub-tasks, and auto-assigned to the best-skilled employee (★ marks skill match — Asha for Store Support, Liz for Web Dev, John for Payments, Raj for Website Core).
+- Clicked "Create 10 Tasks" → all 10 created on the board → navigated to Work Board showing 20 total tasks.
+- Opened an AI-created task (Security Alert) → verified title, Urgent priority, Website Core category, Raj Mehta assignee, full description with sub-tasks (• Remove recovery email, • Secure account), "Original Email" collapsible with the full pasted summary, activity log ("Task created from email summary" + "Assigned to Raj Mehta").
+- No console errors, no page errors. Lint 100% clean.
+
+Stage Summary:
+- Demo tasks removed; 10 real tasks seeded with correct categories, priorities, and assignments.
+- New "Email Summary → Tasks" feature fully working end-to-end: paste a full email analysis → AI extracts every task → auto-categorizes → auto-assigns to the right employee → bulk-creates on the Work Board with full detail and traceability.
+- The two email-to-task flows now coexist: "New Work from Email" (single email → single task + reply draft) and "Email Summary → Tasks" (multi-task digest → multiple auto-assigned tasks).
+- Lint clean, no runtime errors, notif service running on port 3003.

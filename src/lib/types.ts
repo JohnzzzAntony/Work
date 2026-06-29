@@ -250,6 +250,41 @@ export type EmailAnalyzeResponse = {
   detectedSender?: string
 }
 
+// ─── Email Summary → Multi-task analysis ───
+// Used by the "Email Summary" view: paste a full email digest/summary that may
+// contain multiple distinct tasks; the LLM parses them into structured items.
+
+export type ParsedTask = {
+  title: string
+  category: string // category NAME (resolved by backend)
+  categoryId: string // resolved category id
+  priority: Priority
+  description: string
+  dueDate: string | null // ISO date
+  suggestedAssigneeId: string | null
+  suggestedAssigneeName: string | null
+}
+
+export type EmailSummaryAnalyzeRequest = {
+  text: string
+  companyName?: string
+}
+
+export type EmailSummaryAnalyzeResponse = {
+  tasks: ParsedTask[]
+}
+
+export type BulkCreateTaskInput = {
+  title: string
+  categoryId: string
+  priority: Priority
+  description?: string
+  dueDate?: string
+  assigneeId?: string | null
+  sourceEmailText?: string
+  sourceSender?: string
+}
+
 export type DashboardSummary = {
   open: number
   overdue: number

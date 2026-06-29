@@ -17,6 +17,7 @@ import {
   Tag,
   Users,
   Workflow,
+  FileStack,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { formatDistanceToNow, parseISO } from 'date-fns'
@@ -53,6 +54,7 @@ import { DashboardView } from '@/components/views/dashboard-view'
 import { BoardView } from '@/components/views/board-view'
 import { TaskDetailView } from '@/components/views/task-detail-view'
 import { NewEmailView } from '@/components/views/new-email-view'
+import { EmailSummaryView } from '@/components/views/email-summary-view'
 import { NotificationsView } from '@/components/views/notifications-view'
 import { EmployeesView } from '@/components/views/employees-view'
 import { SettingsView } from '@/components/views/settings-view'
@@ -70,6 +72,7 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { view: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { view: 'new-email', label: 'New Work from Email', icon: Mail, adminOnly: true },
+  { view: 'email-summary', label: 'Email Summary → Tasks', icon: FileStack, adminOnly: true },
   { view: 'board', label: 'Work Board', icon: ListTodo },
   { view: 'employees', label: 'Employees', icon: Users, adminOnly: true },
   { view: 'notifications', label: 'Notifications', icon: Bell },
@@ -233,6 +236,8 @@ function ViewSwitcher() {
       return <DashboardView />
     case 'new-email':
       return <NewEmailView />
+    case 'email-summary':
+      return <EmailSummaryView />
     case 'board':
       return <BoardView />
     case 'task-detail':

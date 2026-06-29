@@ -334,3 +334,134 @@ ${emailText.slice(0, 6000)}
   }
   return buildFallbackReply(sender, companyName, tone, category)
 }
+
+// ─── Multi-task summary analysis ───
+// Parses a pasted email digest / summary that may contain MULTIPLE distinct
+// actionable tasks. Returns a structured list the admin can review before
+// bulk-creating. Each task includes a suggested category and priority; the
+// backend resolves the category id and the best-matching assignee separately.
+
+export type LlmParsedTask = {
+  title: string
+  category: string
+  priority: Priority
+  description: string
+  dueDateHint: string | null
+}
+
+/**
+ * Ask the LLM to extract multiple distinct tasks from a pasted email summary.
+ */
+export async function analyzeEmailSummary(
+  text: string,
+  companyName = 'WorkFlow Hub'
+): Promise<LlmParsedTask[]> {
+  const trimmed = (text || '').trim()
+  if (!trimmed) return []
+
+  const systemPrompt = `You are an operations assistant for ${companyName}, a team that handles work across four categories:
+- Website Core (maintenance, uptime, bugs, SSL, domain, security, server issues)
+- Online Payments (gateway issues, payment terminals, Tabby, refunds, reconciliation, disputes)
+- Web Development (new features, enhancements, plugins, SEO, banners, marketplace onboarding, vendor data sharing)
+- Store Support (inventory, BOM, POS machines, stock corrections, warehouse, store operations)
+
+The user will paste a summary or digest of emails that may contain MULTIPLE distinct actionable tasks. Your job is to identify each distinct task and return them as a JSON array.
+
+For each task, provide:
+- "title": a concise actionable title (max 90 characters). Do NOT number it.
+- "category": exactly one of "Website Core", "Online Payments", "Web Development", "Store Support".
+- "priority": one of "low", "medium", "high", "urgent" based on urgency language and impact.
+- "description": a detailed description that includes ALL sub-tasks and context. Use newlines (\\n) and bullet points (•) for sub-tasks. Include the source email reference if present.
+- "dueDateHint": if a specific deadline/expiry date is mentioned, provide it as "YYYY-MM-DD". Otherwise null.
+
+Rules:
+- Split compound items into separate tasks only when they are genuinely independent work items.
+- If a section is just a summary/heading with no actionable task, skip it.
+- Preserve all the detail from the original text in the description field.
+- Return ONLY a JSON object: {"tasks": [...]} — no markdown fences, no explanation.`
+
+  const userPrompt = `Here is the email summary/digest to parse:
+
+"""
+${trimmed.slice(0, 10000)}
+"""
+
+Return JSON only: {"tasks": [...]}`
+
+  try {
+    const zai = await getZai()
+    const completion = await zai.chat.completions.create({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      thinking: { type: 'disabled' },
+    })
+    const raw = completion.choices[0]?.message?.content || ''
+    const cleaned = raw
+      .replace(/^```(?:json)?/i, '')
+      .replace(/```$/i, '')
+      .trim()
+    const parsed = JSON.parse(cleaned)
+    if (Array.isArray(parsed.tasks)) {
+      return parsed.tasks
+        .filter((t: unknown): t is Record<string, unknown> => typeof t === 'object' && t !== null)
+        .map((t) => ({
+          title: String(t.title ?? 'Untitled task').slice(0, 200),
+          category: String(t.category ?? 'Website Core'),
+          priority: (['low', 'medium', 'high', 'urgent'].includes(String(t.priority))
+            ? String(t.priority)
+            : 'medium') as Priority,
+          description: String(t.description ?? ''),
+          dueDateHint:
+            typeof t.dueDateHint === 'string' && t.dueDateHint.length > 0
+              ? t.dueDateHint
+              : null,
+        }))
+    }
+  } catch (err) {
+    console.error('[analyzeEmailSummary] LLM failed, using fallback parser:', err)
+  }
+
+  // Fallback: naive parser — split on numbered headings like "1.", "2.", etc.
+  return fallbackSummaryParser(trimmed)
+}
+
+/**
+ * Naive fallback: splits the text on lines starting with a number + dot,
+ * extracting a title from the first line and the rest as the description.
+ */
+function fallbackSummaryParser(text: string): LlmParsedTask[] {
+  const lines = text.split('\n')
+  const tasks: LlmParsedTask[] = []
+  let current: LlmParsedTask | null = null
+  let buffer: string[] = []
+
+  const flush = () => {
+    if (current && buffer.length > 0) {
+      current.description = buffer.join('\n').trim()
+      tasks.push(current)
+    }
+    current = null
+    buffer = []
+  }
+
+  for (const line of lines) {
+    const match = line.match(/^\s*(\d+)\.\s+(.+)/)
+    if (match) {
+      flush()
+      current = {
+        title: match[2].slice(0, 90),
+        category: detectCategory(line + ' ' + buffer.join(' ')),
+        priority: detectPriority(line + ' ' + buffer.join(' ')),
+        description: '',
+        dueDateHint: null,
+      }
+    } else if (current) {
+      buffer.push(line)
+    }
+  }
+  flush()
+  return tasks.slice(0, 20)
+}
+

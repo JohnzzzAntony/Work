@@ -6,6 +6,7 @@ import type { UserDTO } from '@/lib/types'
 export type ViewId =
   | 'dashboard'
   | 'new-email'
+  | 'email-summary'
   | 'board'
   | 'task-detail'
   | 'employees'
