@@ -1,0 +1,123 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Role: "admin" | "employee"
+// categorySkills is a JSON-encoded string array of Category ids, e.g. '["cat_1","cat_2"]'
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String
+  passwordHash   String
+  role           String   @default("employee")
+  categorySkills String   @default("[]")
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  assignedTasks Task[]      @relation("TaskAssignee")
+  createdTasks  Task[]      @relation("TaskCreator")
+  activityLogs  ActivityLog[]
+  comments      Comment[]
+  notifications Notification[]
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  color     String   @default("#6b7280")
+  createdAt DateTime @default(now())
+
+  tasks Task[]
+}
+
+// Priority: "low" | "medium" | "high" | "urgent"
+// Status: "new" | "assigned" | "in_progress" | "blocked" | "in_review" | "done" | "closed"
+model Task {
+  id                 String    @id @default(cuid())
+  title              String
+  description        String    @default("")
+  categoryId         String
+  category           Category  @relation(fields: [categoryId], references: [id])
+  priority           String    @default("medium")
+  status             String    @default("new")
+  assigneeId         String?
+  assignee           User?     @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  createdById        String
+  createdBy          User      @relation("TaskCreator", fields: [createdById], references: [id])
+  sourceEmailText    String?
+  sourceSender       String?
+  generatedReplyText String?
+  replySent          Boolean   @default(false)
+  dueDate            DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  closedAt           DateTime?
+
+  activityLogs  ActivityLog[]
+  comments      Comment[]
+  notifications Notification[]
+}
+
+// actionType: "created" | "status_change" | "assigned" | "unassigned" | "priority_change"
+//            | "due_date_change" | "comment" | "reply_generated" | "reply_sent"
+//            | "category_change" | "title_change" | "description_change" | "closed"
+model ActivityLog {
+  id         String   @id @default(cuid())
+  taskId     String
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  actionType String
+  content    String
+  createdAt  DateTime @default(now())
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  body      String
+  createdAt DateTime @default(now())
+}
+
+// type: "assigned" | "due_soon" | "overdue" | "comment" | "done_needs_verification"
+//     | "reply_not_sent" | "in_review_reminder" | "status_change"
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskId    String?
+  task      Task?    @relation(fields: [taskId], references: [id])
+  type      String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// Singleton settings row (id = "singleton")
+model Setting {
+  id                    String   @id @default("singleton")
+  companyName           String   @default("WorkFlow Hub")
+  defaultTone           String   @default("formal")
+  urgentHours           Int      @default(4)
+  highDays              Int      @default(1)
+  mediumDays            Int      @default(3)
+  lowDays               Int      @default(7)
+  reminderHoursBefore   Int      @default(24)
+  overdueCheckHours     Int      @default(2)
+  inReviewReminderHours Int      @default(24)
+  replyNotSentHours     Int      @default(4)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
