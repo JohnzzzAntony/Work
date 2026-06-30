@@ -3,11 +3,13 @@
 import * as React from 'react'
 import {
   AlertCircle,
+  Bell,
   Building2,
   CalendarClock,
   Loader2,
   Plus,
   RefreshCw,
+  RotateCw,
   Save,
   ShieldOff,
   Tag,
@@ -47,6 +49,9 @@ type Settings = {
   overdueCheckHours: number
   inReviewReminderHours: number
   replyNotSentHours: number
+  renewalAlertDays: string
+  defaultFollowUpHours: number
+  escalationOverdueHours: number
 }
 
 const DEFAULTS: Settings = {
@@ -60,6 +65,9 @@ const DEFAULTS: Settings = {
   overdueCheckHours: 2,
   inReviewReminderHours: 24,
   replyNotSentHours: 4,
+  renewalAlertDays: '30,14,7,1',
+  defaultFollowUpHours: 48,
+  escalationOverdueHours: 72,
 }
 
 export function SettingsView() {
@@ -319,6 +327,61 @@ export function SettingsView() {
                 label="Reply-not-sent reminder (hours)"
                 value={settings.replyNotSentHours}
                 onChange={(v) => update('replyNotSentHours', v)}
+                min={1}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Renewal alerts */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <RotateCw className="size-4 text-emerald-600 dark:text-emerald-400" />
+                Renewal Alerts
+              </CardTitle>
+              <CardDescription>
+                Notifications will be created this many days before each renewal expires.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="renewalAlertDays">Renewal alert days (comma-separated)</Label>
+                <Input
+                  id="renewalAlertDays"
+                  value={settings.renewalAlertDays}
+                  onChange={(e) => update('renewalAlertDays', e.target.value)}
+                  placeholder="30,14,7,1"
+                  className="font-mono"
+                />
+                <p className="text-xs text-muted-foreground">
+                  e.g. <code className="font-mono">30,14,7,1</code> sends alerts 30, 14, 7, and 1 day(s) before expiry.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Follow-up defaults */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Bell className="size-4 text-emerald-600 dark:text-emerald-400" />
+                Follow-up Defaults
+              </CardTitle>
+              <CardDescription>
+                Defaults for automatic follow-ups and escalations.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 gap-3">
+              <NumberField
+                label="Default follow-up frequency (hours)"
+                value={settings.defaultFollowUpHours}
+                onChange={(v) => update('defaultFollowUpHours', v)}
+                min={1}
+              />
+              <NumberField
+                label="Escalation after overdue (hours)"
+                value={settings.escalationOverdueHours}
+                onChange={(v) => update('escalationOverdueHours', v)}
                 min={1}
               />
             </CardContent>

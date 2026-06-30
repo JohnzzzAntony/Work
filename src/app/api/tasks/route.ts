@@ -13,6 +13,8 @@ export async function GET(request: Request) {
     const categoryId = url.searchParams.get('categoryId')
     const assigneeId = url.searchParams.get('assigneeId')
     const priority = url.searchParams.get('priority')
+    const branchId = url.searchParams.get('branchId')
+    const isRenewal = url.searchParams.get('isRenewal')
     const q = url.searchParams.get('q')
 
     const where: Record<string, unknown> = {}
@@ -20,6 +22,9 @@ export async function GET(request: Request) {
     if (categoryId) where.categoryId = categoryId
     if (assigneeId) where.assigneeId = assigneeId
     if (priority && PRIORITIES.includes(priority as Priority)) where.priority = priority
+    if (branchId) where.branchId = branchId
+    if (isRenewal === 'true') where.isRenewal = true
+    if (isRenewal === 'false') where.isRenewal = false
     if (q && q.trim()) {
       where.title = { contains: q.trim() }
     }
@@ -65,6 +70,13 @@ export async function POST(request: Request) {
       assigneeId = assignee.id
     }
 
+    let branchId: string | null = null
+    if (typeof body.branchId === 'string' && body.branchId.length > 0) {
+      const branch = await db.branch.findUnique({ where: { id: body.branchId } })
+      if (!branch) return jsonError('branchId does not exist', 400)
+      branchId = branch.id
+    }
+
     // Bump status to "assigned" if newly assigned and currently "new"
     const finalStatus: TaskStatus =
       assigneeId && initialStatus === 'new' ? 'assigned' : initialStatus
@@ -73,6 +85,21 @@ export async function POST(request: Request) {
       typeof body.dueDate === 'string' && body.dueDate.length > 0
         ? new Date(body.dueDate)
         : null
+
+    // Renewal tracking fields
+    const isRenewal = typeof body.isRenewal === 'boolean' ? body.isRenewal : false
+    const renewalExpiryDate =
+      typeof body.renewalExpiryDate === 'string' && body.renewalExpiryDate.length > 0
+        ? new Date(body.renewalExpiryDate)
+        : null
+    const renewalProvider =
+      typeof body.renewalProvider === 'string' ? body.renewalProvider : null
+
+    // Follow-up frequency (hours)
+    let followUpFrequencyHours: number | null = null
+    if (typeof body.followUpFrequencyHours === 'number' && Number.isFinite(body.followUpFrequencyHours)) {
+      followUpFrequencyHours = Math.max(0, Math.floor(body.followUpFrequencyHours))
+    }
 
     const created = await db.task.create({
       data: {
@@ -83,12 +110,17 @@ export async function POST(request: Request) {
         status: finalStatus,
         assigneeId,
         createdById: currentUser.id,
+        branchId,
         sourceEmailText: typeof body.sourceEmailText === 'string' ? body.sourceEmailText : null,
         sourceSender: typeof body.sourceSender === 'string' ? body.sourceSender : null,
         generatedReplyText:
           typeof body.generatedReplyText === 'string' ? body.generatedReplyText : null,
         replySent: typeof body.replySent === 'boolean' ? body.replySent : false,
         dueDate,
+        isRenewal,
+        renewalExpiryDate,
+        renewalProvider,
+        followUpFrequencyHours,
       },
       include: TASK_INCLUDES,
     })
@@ -123,6 +155,17 @@ export async function POST(request: Request) {
           },
         })
       }
+    }
+
+    if (isRenewal) {
+      await db.activityLog.create({
+        data: {
+          taskId: created.id,
+          userId: currentUser.id,
+          actionType: 'renewal_alert',
+          content: `Task marked as renewal${renewalExpiryDate ? ` (expires ${renewalExpiryDate.toISOString()})` : ''}`,
+        },
+      })
     }
 
     // Re-fetch with includes so relations reflect the final state

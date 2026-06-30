@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { requireAdmin, requireUser } from '@/lib/auth'
 import { apiCatch, jsonError } from '@/lib/api-helpers'
 import { TONES } from '@/lib/types'
-import type { ReplyTone } from '@/lib/types'
+import type { ReplyTone, SettingsDTO } from '@/lib/types'
 
 async function getOrCreateSettings() {
   let settings = await db.setting.findUnique({ where: { id: 'singleton' } })
@@ -13,11 +13,30 @@ async function getOrCreateSettings() {
   return settings
 }
 
+function settingsToDTO(s: Awaited<ReturnType<typeof getOrCreateSettings>>): SettingsDTO {
+  return {
+    id: s.id,
+    companyName: s.companyName,
+    defaultTone: s.defaultTone as ReplyTone,
+    urgentHours: s.urgentHours,
+    highDays: s.highDays,
+    mediumDays: s.mediumDays,
+    lowDays: s.lowDays,
+    reminderHoursBefore: s.reminderHoursBefore,
+    overdueCheckHours: s.overdueCheckHours,
+    inReviewReminderHours: s.inReviewReminderHours,
+    replyNotSentHours: s.replyNotSentHours,
+    renewalAlertDays: s.renewalAlertDays,
+    defaultFollowUpHours: s.defaultFollowUpHours,
+    escalationOverdueHours: s.escalationOverdueHours,
+  }
+}
+
 export async function GET() {
   try {
     await requireUser()
     const settings = await getOrCreateSettings()
-    return NextResponse.json(settings)
+    return NextResponse.json(settingsToDTO(settings))
   } catch (err) {
     return apiCatch(err)
   }
@@ -43,9 +62,32 @@ export async function PATCH(request: Request) {
     if (typeof body.inReviewReminderHours === 'number') data.inReviewReminderHours = body.inReviewReminderHours
     if (typeof body.replyNotSentHours === 'number') data.replyNotSentHours = body.replyNotSentHours
 
+    if (typeof body.renewalAlertDays === 'string') {
+      // Validate the string parses to a comma-separated list of positive integers
+      const cleaned = body.renewalAlertDays
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+      const nums = cleaned.map((s) => Number(s))
+      if (nums.every((n) => Number.isFinite(n) && n > 0)) {
+        data.renewalAlertDays = nums.join(',')
+      } else {
+        return jsonError('renewalAlertDays must be a comma-separated list of positive integers', 400)
+      }
+    }
+    if (typeof body.defaultFollowUpHours === 'number' && body.defaultFollowUpHours >= 0) {
+      data.defaultFollowUpHours = Math.floor(body.defaultFollowUpHours)
+    }
+    if (typeof body.escalationOverdueHours === 'number' && body.escalationOverdueHours >= 0) {
+      data.escalationOverdueHours = Math.floor(body.escalationOverdueHours)
+    }
+
     const settings = await getOrCreateSettings()
-    const updated = await db.setting.update({ where: { id: settings.id }, data })
-    return NextResponse.json(updated)
+    const updated = await db.setting.update({
+      where: { id: settings.id },
+      data: data as Parameters<typeof db.setting.update>[0]['data'],
+    })
+    return NextResponse.json(settingsToDTO(updated))
   } catch (err) {
     return apiCatch(err)
   }

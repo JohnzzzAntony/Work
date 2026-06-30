@@ -17,6 +17,11 @@ function parseSkills(value: unknown): string[] {
   return []
 }
 
+const USER_INCLUDES = {
+  department: { select: { name: true } },
+  branch: { select: { name: true } },
+} as const
+
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -42,6 +47,30 @@ export async function PATCH(
     if (typeof body.password === 'string' && body.password.length > 0) {
       data.passwordHash = hashPassword(body.password)
     }
+    if (typeof body.jobTitle === 'string') data.jobTitle = body.jobTitle
+    if (typeof body.phone === 'string') data.phone = body.phone
+
+    // Optional departmentId — pass null to clear
+    if (body.departmentId !== undefined) {
+      if (typeof body.departmentId === 'string' && body.departmentId.length > 0) {
+        const dept = await db.department.findUnique({ where: { id: body.departmentId } })
+        if (!dept) return jsonError('departmentId does not exist', 400)
+        data.departmentId = body.departmentId
+      } else {
+        data.departmentId = null
+      }
+    }
+    // Optional branchId — pass null to clear
+    if (body.branchId !== undefined) {
+      if (typeof body.branchId === 'string' && body.branchId.length > 0) {
+        const branch = await db.branch.findUnique({ where: { id: body.branchId } })
+        if (!branch) return jsonError('branchId does not exist', 400)
+        data.branchId = body.branchId
+      } else {
+        data.branchId = null
+      }
+    }
+
     if (data.email && data.email !== existing.email) {
       const conflict = await db.user.findUnique({ where: { email: data.email as string } })
       if (conflict && conflict.id !== id) {
@@ -49,7 +78,11 @@ export async function PATCH(
       }
     }
 
-    const updated = await db.user.update({ where: { id }, data })
+    const updated = await db.user.update({
+      where: { id },
+      data: data as Parameters<typeof db.user.update>[0]['data'],
+      include: USER_INCLUDES,
+    })
     const dto: UserDTO = {
       ...toSafeUser(updated),
       createdAt: updated.createdAt.toISOString(),

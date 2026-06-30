@@ -49,7 +49,13 @@ export async function getCurrentUser() {
   const token = cookieStore.get(SESSION_COOKIE)?.value
   const userId = verifySessionToken(token)
   if (!userId) return null
-  const user = await db.user.findUnique({ where: { id: userId } })
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    include: {
+      department: { select: { name: true } },
+      branch: { select: { name: true } },
+    },
+  })
   if (!user || !user.active) return null
   return user
 }
@@ -76,6 +82,37 @@ export async function requireAdmin() {
 export const SESSION_COOKIE_NAME = SESSION_COOKIE
 export const SESSION_MAX_AGE = 60 * 60 * 24 * 7 // 7 days
 
+// Shared secret used by cron endpoints so they can be triggered by an external
+// scheduler without an admin session. Override via the RENEWAL_CRON_KEY env var.
+export const CRON_SHARED_KEY =
+  process.env.RENEWAL_CRON_KEY || 'workflowhub-renewal-cron'
+
+/**
+ * Authenticate a cron-style request either via an existing admin session OR a
+ * shared-secret query parameter (?key=<CRON_SHARED_KEY>). Returns the admin
+ * user when the session path succeeds (so engines can attribute actions to a
+ * real user), or `null` when only the shared-secret path was used. Throws
+ * 'UNAUTHORIZED' when neither path is satisfied so it composes with apiCatch.
+ */
+export async function requireCronOrAdmin(request: Request) {
+  try {
+    const admin = await requireAdmin()
+    return admin
+  } catch {
+    // fall through to shared-secret check
+  }
+  try {
+    const url = new URL(request.url)
+    const key = url.searchParams.get('key')
+    if (typeof key === 'string' && key.length > 0 && key === CRON_SHARED_KEY) {
+      return null
+    }
+  } catch {
+    /* ignore URL parse errors */
+  }
+  throw new Error('UNAUTHORIZED')
+}
+
 // Type for the safe user object returned to the client (no passwordHash)
 export type SafeUser = {
   id: string
@@ -83,6 +120,12 @@ export type SafeUser = {
   name: string
   role: 'admin' | 'employee'
   categorySkills: string[]
+  departmentId: string | null
+  departmentName: string | null
+  branchId: string | null
+  branchName: string | null
+  jobTitle: string | null
+  phone: string | null
   active: boolean
   createdAt: Date
 }
@@ -93,6 +136,12 @@ export function toSafeUser(user: {
   name: string
   role: string
   categorySkills: string
+  departmentId?: string | null
+  department?: { name: string } | null
+  branchId?: string | null
+  branch?: { name: string } | null
+  jobTitle?: string | null
+  phone?: string | null
   active: boolean
   createdAt: Date
 }): SafeUser {
@@ -108,6 +157,12 @@ export function toSafeUser(user: {
     name: user.name,
     role: user.role as 'admin' | 'employee',
     categorySkills: skills,
+    departmentId: user.departmentId ?? null,
+    departmentName: user.department?.name ?? null,
+    branchId: user.branchId ?? null,
+    branchName: user.branch?.name ?? null,
+    jobTitle: user.jobTitle ?? null,
+    phone: user.phone ?? null,
     active: user.active,
     createdAt: user.createdAt,
   }

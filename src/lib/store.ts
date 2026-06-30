@@ -10,6 +10,8 @@ export type ViewId =
   | 'board'
   | 'task-detail'
   | 'employees'
+  | 'departments'
+  | 'branches'
   | 'notifications'
   | 'reports'
   | 'settings'

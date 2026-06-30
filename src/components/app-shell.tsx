@@ -4,8 +4,10 @@ import * as React from 'react'
 import { io, type Socket } from 'socket.io-client'
 import {
   Bell,
+  Building2,
   CheckCheck,
   ChevronDown,
+  Landmark,
   LayoutDashboard,
   ListTodo,
   LogOut,
@@ -57,6 +59,8 @@ import { NewEmailView } from '@/components/views/new-email-view'
 import { EmailSummaryView } from '@/components/views/email-summary-view'
 import { NotificationsView } from '@/components/views/notifications-view'
 import { EmployeesView } from '@/components/views/employees-view'
+import { DepartmentsView } from '@/components/views/departments-view'
+import { BranchesView } from '@/components/views/branches-view'
 import { SettingsView } from '@/components/views/settings-view'
 import { ReportsView } from '@/components/views/reports-view'
 import { cn } from '@/lib/utils'
@@ -75,6 +79,8 @@ const NAV_ITEMS: NavItem[] = [
   { view: 'email-summary', label: 'Email Summary → Tasks', icon: FileStack, adminOnly: true },
   { view: 'board', label: 'Work Board', icon: ListTodo },
   { view: 'employees', label: 'Employees', icon: Users, adminOnly: true },
+  { view: 'departments', label: 'Departments', icon: Building2, adminOnly: true },
+  { view: 'branches', label: 'Branches & Entities', icon: Landmark, adminOnly: true },
   { view: 'notifications', label: 'Notifications', icon: Bell },
   { view: 'reports', label: 'Reports', icon: ShieldCheck, adminOnly: true },
   { view: 'settings', label: 'Settings', icon: Tag, adminOnly: true },
@@ -244,6 +250,10 @@ function ViewSwitcher() {
       return <TaskDetailView />
     case 'employees':
       return <EmployeesView />
+    case 'departments':
+      return <DepartmentsView />
+    case 'branches':
+      return <BranchesView />
     case 'notifications':
       return <NotificationsView />
     case 'reports':

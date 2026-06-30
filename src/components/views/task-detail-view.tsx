@@ -4,6 +4,7 @@ import * as React from 'react'
 import { format, formatDistanceToNow, parseISO } from 'date-fns'
 import {
   ArrowLeft,
+  Bell,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -11,9 +12,11 @@ import {
   Clock,
   Delete as DeleteIcon,
   History,
+  Landmark,
   Loader2,
   Mail,
   MessageSquare,
+  RotateCw,
   Send,
   ShieldCheck,
   User as UserIcon,
@@ -54,19 +57,23 @@ import {
 } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
 import {
   CategoryBadge,
   PriorityBadge,
   StatusBadge,
   UserAvatar,
 } from '@/components/ui-badges'
+import { RenewalBadge } from '@/components/renewal-badge'
 import { apiFetch } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import {
   PRIORITIES,
   STATUSES,
   STATUS_META,
+  type BranchDTO,
   type CategoryDTO,
+  type FollowUpDTO,
   type TaskDetailDTO,
   type UserDTO,
 } from '@/lib/types'
@@ -84,6 +91,8 @@ export function TaskDetailView() {
   const [error, setError] = React.useState<string | null>(null)
   const [categories, setCategories] = React.useState<CategoryDTO[]>([])
   const [users, setUsers] = React.useState<UserDTO[]>([])
+  const [branches, setBranches] = React.useState<BranchDTO[]>([])
+  const [sendingFollowUp, setSendingFollowUp] = React.useState(false)
 
   // Editable local fields (synced on save)
   const [title, setTitle] = React.useState('')
@@ -113,6 +122,7 @@ export function TaskDetailView() {
   React.useEffect(() => {
     void apiFetch<CategoryDTO[]>('/api/categories').then(setCategories).catch(() => {})
     void apiFetch<UserDTO[]>('/api/users').then(setUsers).catch(() => {})
+    void apiFetch<BranchDTO[]>('/api/branches').then(setBranches).catch(() => {})
     void load()
   }, [load])
 
@@ -179,6 +189,65 @@ export function TaskDetailView() {
     if (updated) {
       toast.success(value ? 'Due date updated' : 'Due date cleared')
       void load()
+    }
+  }
+
+  async function handleBranchChange(value: string) {
+    const branchId = value === 'none' ? null : value
+    const updated = await patchTask({ branchId })
+    if (updated) {
+      toast.success(branchId ? 'Branch set' : 'Branch cleared')
+      void load()
+    }
+  }
+
+  async function handleRenewalToggle(checked: boolean) {
+    const updated = await patchTask({ isRenewal: checked })
+    if (updated) {
+      toast.success(checked ? 'Marked as renewal task' : 'Renewal flag cleared')
+      void load()
+    }
+  }
+
+  async function handleRenewalExpiryChange(value: string) {
+    const updated = await patchTask({ renewalExpiryDate: value || null })
+    if (updated) {
+      toast.success(value ? 'Renewal expiry updated' : 'Renewal expiry cleared')
+      void load()
+    }
+  }
+
+  async function handleRenewalProviderChange(value: string) {
+    const updated = await patchTask({ renewalProvider: value || null })
+    if (updated) {
+      toast.success('Renewal provider updated')
+      void load()
+    }
+  }
+
+  async function handleFollowUpFrequencyChange(value: string) {
+    const hours = value === 'none' ? null : Number(value)
+    const updated = await patchTask({ followUpFrequencyHours: hours })
+    if (updated) {
+      toast.success(hours === null ? 'Follow-ups disabled' : `Follow-up frequency set to ${hours}h`)
+      void load()
+    }
+  }
+
+  async function handleSendFollowUp() {
+    if (!task) return
+    setSendingFollowUp(true)
+    try {
+      await apiFetch<{ ok: boolean; followUp: FollowUpDTO }>(
+        `/api/tasks/${task.id}/follow-up`,
+        { method: 'POST' }
+      )
+      toast.success('Follow-up sent')
+      void load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send follow-up')
+    } finally {
+      setSendingFollowUp(false)
     }
   }
 
@@ -354,6 +423,9 @@ export function TaskDetailView() {
             </Badge>
             <CategoryBadge category={{ name: task.categoryName, color: task.categoryColor }} />
             <PriorityBadge priority={task.priority} />
+            {task.isRenewal && (
+              <RenewalBadge renewalExpiryDate={task.renewalExpiryDate} />
+            )}
             <span className="text-xs text-muted-foreground ml-auto">
               Created {format(parseISO(task.createdAt), 'MMM d, yyyy')} by {task.createdByName}
             </span>
@@ -441,7 +513,7 @@ export function TaskDetailView() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5 sm:col-span-2 lg:col-span-4">
+            <div className="space-y-1.5 sm:col-span-1">
               <Label className="text-xs text-muted-foreground flex items-center gap-1">
                 <CalendarDays className="size-3" /> Due date
               </Label>
@@ -451,6 +523,61 @@ export function TaskDetailView() {
                 onChange={(e) => void handleDueDateChange(e.target.value)}
               />
             </div>
+            <div className="space-y-1.5 sm:col-span-1">
+              <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                <Landmark className="size-3" /> Branch
+              </Label>
+              <Select
+                value={task.branchId ?? 'none'}
+                onValueChange={(v) => void handleBranchChange(v)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No branch</SelectItem>
+                  {branches.filter((b) => b.active).map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="sm:col-span-2 lg:col-span-2 flex items-center justify-between rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <RotateCw className="size-4 text-emerald-600 dark:text-emerald-400" />
+                <div>
+                  <p className="text-sm font-medium">Renewal task</p>
+                  <p className="text-xs text-muted-foreground">Track expiry &amp; send renewal alerts.</p>
+                </div>
+              </div>
+              <Switch
+                checked={task.isRenewal}
+                onCheckedChange={(v) => void handleRenewalToggle(v)}
+                aria-label="Mark as renewal task"
+              />
+            </div>
+            {task.isRenewal && (
+              <>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Renewal Expiry</Label>
+                  <Input
+                    type="date"
+                    value={task.renewalExpiryDate ? task.renewalExpiryDate.slice(0, 10) : ''}
+                    onChange={(e) => void handleRenewalExpiryChange(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5 sm:col-span-1 lg:col-span-3">
+                  <Label className="text-xs text-muted-foreground">Renewal Provider</Label>
+                  <Input
+                    value={task.renewalProvider ?? ''}
+                    onChange={(e) => void handleRenewalProviderChange(e.target.value)}
+                    placeholder="e.g. GoDaddy, AWS, Namecheap"
+                  />
+                </div>
+              </>
+            )}
           </div>
         </CardHeader>
       </Card>
@@ -637,6 +764,132 @@ export function TaskDetailView() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Follow-ups */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Bell className="size-4 text-emerald-600 dark:text-emerald-400" />
+                  Follow-ups
+                </CardTitle>
+                <Badge variant="outline" className="text-xs">
+                  {task.followUpCount} sent
+                </Badge>
+              </div>
+              <CardDescription>
+                Nudge the assignee for a status update at a regular cadence.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Frequency</Label>
+                  <Select
+                    value={
+                      task.followUpFrequencyHours != null
+                        ? String(task.followUpFrequencyHours)
+                        : 'none'
+                    }
+                    onValueChange={(v) => void handleFollowUpFrequencyChange(v)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None (disabled)</SelectItem>
+                      <SelectItem value="4">Every 4 hours</SelectItem>
+                      <SelectItem value="8">Every 8 hours</SelectItem>
+                      <SelectItem value="24">Every 24 hours</SelectItem>
+                      <SelectItem value="48">Every 48 hours</SelectItem>
+                      <SelectItem value="72">Every 72 hours</SelectItem>
+                      <SelectItem value="168">Every week</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Last follow-up</Label>
+                  <div className="rounded-md border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm">
+                    {task.lastFollowUpAt ? (
+                      <span title={format(parseISO(task.lastFollowUpAt), 'PPpp')}>
+                        {formatDistanceToNow(parseISO(task.lastFollowUpAt), { addSuffix: true })}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground italic">No follow-up yet</span>
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Total sent</Label>
+                  <div className="rounded-md border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm font-semibold">
+                    {task.followUpCount}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                  onClick={() => void handleSendFollowUp()}
+                  disabled={sendingFollowUp || !task.assigneeId}
+                  title={!task.assigneeId ? 'Assign the task first' : undefined}
+                >
+                  {sendingFollowUp ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Send className="size-4" />
+                  )}
+                  Send Follow-up Now
+                </Button>
+              </div>
+
+              {/* Follow-up history */}
+              {task.followUps.length > 0 ? (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-2">
+                    Follow-up history
+                  </p>
+                  <ol className="space-y-2 max-h-72 overflow-y-auto pr-1 wf-scroll">
+                    {task.followUps
+                      .slice()
+                      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                      .map((f) => {
+                        const typeMeta = FOLLOWUP_TYPE_META[f.type] ?? FOLLOWUP_TYPE_META.reminder
+                        return (
+                          <li
+                            key={f.id}
+                            className="rounded-md border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm"
+                          >
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <Badge
+                                variant="outline"
+                                className={cn('text-[10px] capitalize', typeMeta.tone)}
+                              >
+                                {f.type}
+                              </Badge>
+                              <span className="text-[10px] text-muted-foreground" title={format(parseISO(f.createdAt), 'PPpp')}>
+                                {formatDistanceToNow(parseISO(f.createdAt), { addSuffix: true })}
+                              </span>
+                            </div>
+                            <p className="mt-1.5 text-sm text-foreground">{f.message}</p>
+                            {f.sentToUserName && (
+                              <p className="mt-0.5 text-xs text-muted-foreground flex items-center gap-1">
+                                <UserIcon className="size-3" /> To {f.sentToUserName}
+                              </p>
+                            )}
+                          </li>
+                        )
+                      })}
+                  </ol>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-3">
+                  No follow-ups have been sent yet.
+                </p>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
         {/* Right column: actions / metadata */}
@@ -705,6 +958,22 @@ export function TaskDetailView() {
                   {task.dueDate ? format(parseISO(task.dueDate), 'MMM d, yyyy') : '—'}
                 </span>
               </div>
+              {task.branchName && (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground flex items-center gap-1.5">
+                    <Landmark className="size-3.5" /> Branch
+                  </span>
+                  <span className="font-medium truncate">{task.branchName}</span>
+                </div>
+              )}
+              {task.isRenewal && (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground flex items-center gap-1.5">
+                    <RotateCw className="size-3.5" /> Renewal
+                  </span>
+                  <RenewalBadge renewalExpiryDate={task.renewalExpiryDate} variant="compact" />
+                </div>
+              )}
               <div className="flex items-center justify-between gap-2">
                 <span className="text-muted-foreground">Status</span>
                 <StatusBadge status={task.status} />
@@ -733,4 +1002,19 @@ export function TaskDetailView() {
       </div>
     </div>
   )
+}
+
+const FOLLOWUP_TYPE_META: Record<string, { tone: string }> = {
+  reminder: {
+    tone: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-900',
+  },
+  escalation: {
+    tone: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/60 dark:text-red-300 dark:border-red-900',
+  },
+  overdue: {
+    tone: 'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-900',
+  },
+  renewal: {
+    tone: 'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-900',
+  },
 }

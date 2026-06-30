@@ -17,6 +17,11 @@ function parseSkills(value: unknown): string[] {
   return []
 }
 
+const USER_INCLUDES = {
+  department: { select: { name: true } },
+  branch: { select: { name: true } },
+} as const
+
 export async function GET() {
   try {
     const currentUser = await requireUser()
@@ -24,6 +29,7 @@ export async function GET() {
       const users = await db.user.findMany({
         orderBy: { createdAt: 'asc' },
         include: {
+          ...USER_INCLUDES,
           assignedTasks: {
             where: { status: { notIn: ['done', 'closed'] } },
             select: { id: true },
@@ -38,7 +44,10 @@ export async function GET() {
       return NextResponse.json(dto)
     }
     // employees only see themselves
-    const u = await db.user.findUnique({ where: { id: currentUser.id } })
+    const u = await db.user.findUnique({
+      where: { id: currentUser.id },
+      include: USER_INCLUDES,
+    })
     if (!u) return jsonError('User not found', 404)
     const dto: UserDTO[] = [
       {
@@ -69,15 +78,33 @@ export async function POST(request: Request) {
     if (existing) {
       return jsonError('A user with that email already exists', 400)
     }
+
+    const data: Record<string, unknown> = {
+      name: body.name,
+      email: body.email.toLowerCase(),
+      passwordHash: hashPassword(body.password),
+      role,
+      categorySkills: JSON.stringify(parseSkills(body.categorySkills)),
+      active: true,
+    }
+
+    // Optional department / branch / job title / phone
+    if (typeof body.departmentId === 'string' && body.departmentId.length > 0) {
+      const dept = await db.department.findUnique({ where: { id: body.departmentId } })
+      if (!dept) return jsonError('departmentId does not exist', 400)
+      data.departmentId = body.departmentId
+    }
+    if (typeof body.branchId === 'string' && body.branchId.length > 0) {
+      const branch = await db.branch.findUnique({ where: { id: body.branchId } })
+      if (!branch) return jsonError('branchId does not exist', 400)
+      data.branchId = body.branchId
+    }
+    if (typeof body.jobTitle === 'string') data.jobTitle = body.jobTitle
+    if (typeof body.phone === 'string') data.phone = body.phone
+
     const created = await db.user.create({
-      data: {
-        name: body.name,
-        email: body.email.toLowerCase(),
-        passwordHash: hashPassword(body.password),
-        role,
-        categorySkills: JSON.stringify(parseSkills(body.categorySkills)),
-        active: true,
-      },
+      data: data as Parameters<typeof db.user.create>[0]['data'],
+      include: USER_INCLUDES,
     })
     const dto: UserDTO = {
       ...toSafeUser(created),

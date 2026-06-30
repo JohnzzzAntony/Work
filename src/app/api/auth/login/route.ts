@@ -15,7 +15,13 @@ export async function POST(request: Request) {
     if (!body || typeof body.email !== 'string' || typeof body.password !== 'string') {
       return jsonError('Email and password are required', 400)
     }
-    const user = await db.user.findUnique({ where: { email: body.email.toLowerCase() } })
+    const user = await db.user.findUnique({
+      where: { email: body.email.toLowerCase() },
+      include: {
+        department: { select: { name: true } },
+        branch: { select: { name: true } },
+      },
+    })
     if (!user || !user.active) {
       return jsonError('Invalid email or password', 401)
     }

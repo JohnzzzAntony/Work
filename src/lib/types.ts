@@ -20,6 +20,13 @@ export type NotificationType =
   | 'reply_not_sent'
   | 'in_review_reminder'
   | 'status_change'
+  | 'renewal_30d'
+  | 'renewal_14d'
+  | 'renewal_7d'
+  | 'renewal_1d'
+  | 'renewal_expired'
+  | 'follow_up'
+  | 'escalation'
 
 export const PRIORITIES: Priority[] = ['low', 'medium', 'high', 'urgent']
 export const STATUSES: TaskStatus[] = [
@@ -153,14 +160,72 @@ export const NOTIFICATION_TYPE_META: Record<
     label: 'Status update',
     toneClass: 'text-slate-600 dark:text-slate-400',
   },
+  renewal_30d: {
+    icon: '📅',
+    label: 'Renewal in 30 days',
+    toneClass: 'text-sky-600 dark:text-sky-400',
+  },
+  renewal_14d: {
+    icon: '📅',
+    label: 'Renewal in 14 days',
+    toneClass: 'text-amber-600 dark:text-amber-400',
+  },
+  renewal_7d: {
+    icon: '⚠️',
+    label: 'Renewal in 7 days',
+    toneClass: 'text-orange-600 dark:text-orange-400',
+  },
+  renewal_1d: {
+    icon: '🚨',
+    label: 'Renewal tomorrow!',
+    toneClass: 'text-red-600 dark:text-red-400',
+  },
+  renewal_expired: {
+    icon: '🔴',
+    label: 'Renewal expired',
+    toneClass: 'text-red-600 dark:text-red-400',
+  },
+  follow_up: {
+    icon: '🔔',
+    label: 'Follow-up reminder',
+    toneClass: 'text-amber-600 dark:text-amber-400',
+  },
+  escalation: {
+    icon: '⬆️',
+    label: 'Escalated',
+    toneClass: 'text-red-600 dark:text-red-400',
+  },
 }
 
 // API response types — these define the contract between frontend and backend
+
+export type DepartmentDTO = {
+  id: string
+  name: string
+  color: string
+  createdAt: string
+  employeeCount?: number
+}
+
+export type BranchDTO = {
+  id: string
+  name: string
+  type: string // branch | entity | subsidiary | store | office
+  address: string | null
+  phone: string | null
+  email: string | null
+  active: boolean
+  createdAt: string
+  employeeCount?: number
+  taskCount?: number
+}
 
 export type CategoryDTO = {
   id: string
   name: string
   color: string
+  departmentId: string | null
+  departmentName: string | null
 }
 
 export type UserDTO = {
@@ -169,6 +234,12 @@ export type UserDTO = {
   name: string
   role: UserRole
   categorySkills: string[]
+  departmentId: string | null
+  departmentName: string | null
+  branchId: string | null
+  branchName: string | null
+  jobTitle: string | null
+  phone: string | null
   active: boolean
   createdAt: string
   openTaskCount?: number
@@ -193,6 +264,16 @@ export type CommentDTO = {
   createdAt: string
 }
 
+export type FollowUpDTO = {
+  id: string
+  taskId: string
+  type: string // reminder | escalation | overdue | renewal
+  message: string
+  sentToUserId: string | null
+  sentToUserName: string | null
+  createdAt: string
+}
+
 export type TaskDTO = {
   id: string
   title: string
@@ -206,11 +287,19 @@ export type TaskDTO = {
   assigneeName: string | null
   createdById: string
   createdByName: string
+  branchId: string | null
+  branchName: string | null
   sourceEmailText: string | null
   sourceSender: string | null
   generatedReplyText: string | null
   replySent: boolean
   dueDate: string | null
+  isRenewal: boolean
+  renewalExpiryDate: string | null
+  renewalProvider: string | null
+  followUpFrequencyHours: number | null
+  lastFollowUpAt: string | null
+  followUpCount: number
   createdAt: string
   updatedAt: string
   closedAt: string | null
@@ -220,6 +309,7 @@ export type TaskDTO = {
 export type TaskDetailDTO = TaskDTO & {
   activityLogs: ActivityLogDTO[]
   comments: CommentDTO[]
+  followUps: FollowUpDTO[]
 }
 
 export type NotificationDTO = {
@@ -292,6 +382,7 @@ export type DashboardSummary = {
   doneThisWeek: number
   byCategory: { categoryId: string; name: string; color: string; count: number }[]
   byEmployee: { userId: string; name: string; openCount: number; overdueCount: number }[]
+  byDepartment: { departmentId: string; name: string; color: string; openCount: number; overdueCount: number }[]
   needsAttention: {
     id: string
     title: string
@@ -300,6 +391,40 @@ export type DashboardSummary = {
     dueDate: string | null
     priority: Priority
   }[]
+  upcomingRenewals: {
+    id: string
+    title: string
+    renewalExpiryDate: string
+    daysUntilExpiry: number
+    assigneeName: string | null
+    renewalProvider: string | null
+    isExpired: boolean
+  }[]
+  pendingFollowUps: {
+    id: string
+    title: string
+    assigneeName: string | null
+    lastFollowUpAt: string | null
+    dueDate: string | null
+    hoursSinceLastFollowUp: number | null
+  }[]
+}
+
+export type SettingsDTO = {
+  id: string
+  companyName: string
+  defaultTone: ReplyTone
+  urgentHours: number
+  highDays: number
+  mediumDays: number
+  lowDays: number
+  reminderHoursBefore: number
+  overdueCheckHours: number
+  inReviewReminderHours: number
+  replyNotSentHours: number
+  renewalAlertDays: string
+  defaultFollowUpHours: number
+  escalationOverdueHours: number
 }
 
 export type ReportsSummary = {

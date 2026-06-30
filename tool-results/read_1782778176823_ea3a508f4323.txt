@@ -1,0 +1,737 @@
+     1→'use client'
+     2→
+     3→import * as React from 'react'
+     4→import { format, formatDistanceToNow, parseISO } from 'date-fns'
+     5→import {
+     6→  ArrowLeft,
+     7→  CalendarDays,
+     8→  Check,
+     9→  CheckCircle2,
+    10→  ClipboardCopy,
+    11→  Clock,
+    12→  Delete as DeleteIcon,
+    13→  History,
+    14→  Loader2,
+    15→  Mail,
+    16→  MessageSquare,
+    17→  Send,
+    18→  ShieldCheck,
+    19→  User as UserIcon,
+    20→} from 'lucide-react'
+    21→import { Button } from '@/components/ui/button'
+    22→import { Input } from '@/components/ui/input'
+    23→import { Label } from '@/components/ui/label'
+    24→import { Textarea } from '@/components/ui/textarea'
+    25→import {
+    26→  Card,
+    27→  CardContent,
+    28→  CardDescription,
+    29→  CardHeader,
+    30→  CardTitle,
+    31→} from '@/components/ui/card'
+    32→import {
+    33→  Select,
+    34→  SelectContent,
+    35→  SelectItem,
+    36→  SelectTrigger,
+    37→  SelectValue,
+    38→} from '@/components/ui/select'
+    39→import {
+    40→  AlertDialog,
+    41→  AlertDialogAction,
+    42→  AlertDialogCancel,
+    43→  AlertDialogContent,
+    44→  AlertDialogDescription,
+    45→  AlertDialogFooter,
+    46→  AlertDialogHeader,
+    47→  AlertDialogTitle,
+    48→  AlertDialogTrigger,
+    49→} from '@/components/ui/alert-dialog'
+    50→import {
+    51→  Collapsible,
+    52→  CollapsibleContent,
+    53→  CollapsibleTrigger,
+    54→} from '@/components/ui/collapsible'
+    55→import { Skeleton } from '@/components/ui/skeleton'
+    56→import { Badge } from '@/components/ui/badge'
+    57→import {
+    58→  CategoryBadge,
+    59→  PriorityBadge,
+    60→  StatusBadge,
+    61→  UserAvatar,
+    62→} from '@/components/ui-badges'
+    63→import { apiFetch } from '@/lib/api'
+    64→import { useAppStore } from '@/lib/store'
+    65→import {
+    66→  PRIORITIES,
+    67→  STATUSES,
+    68→  STATUS_META,
+    69→  type CategoryDTO,
+    70→  type TaskDetailDTO,
+    71→  type UserDTO,
+    72→} from '@/lib/types'
+    73→import { cn } from '@/lib/utils'
+    74→import { toast } from 'sonner'
+    75→
+    76→export function TaskDetailView() {
+    77→  const user = useAppStore((s) => s.user)
+    78→  const taskId = useAppStore((s) => s.currentTaskId)
+    79→  const setView = useAppStore((s) => s.setView)
+    80→  const isAdmin = user?.role === 'admin'
+    81→
+    82→  const [task, setTask] = React.useState<TaskDetailDTO | null>(null)
+    83→  const [loading, setLoading] = React.useState(true)
+    84→  const [error, setError] = React.useState<string | null>(null)
+    85→  const [categories, setCategories] = React.useState<CategoryDTO[]>([])
+    86→  const [users, setUsers] = React.useState<UserDTO[]>([])
+    87→
+    88→  // Editable local fields (synced on save)
+    89→  const [title, setTitle] = React.useState('')
+    90→  const [description, setDescription] = React.useState('')
+    91→  const [commentText, setCommentText] = React.useState('')
+    92→  const [savingDesc, setSavingDesc] = React.useState(false)
+    93→  const [savingTitle, setSavingTitle] = React.useState(false)
+    94→  const [postingComment, setPostingComment] = React.useState(false)
+    95→  const [replyExpanded, setReplyExpanded] = React.useState(false)
+    96→
+    97→  const load = React.useCallback(async () => {
+    98→    if (!taskId) return
+    99→    setLoading(true)
+   100→    setError(null)
+   101→    try {
+   102→      const data = await apiFetch<TaskDetailDTO>(`/api/tasks/${taskId}`)
+   103→      setTask(data)
+   104→      setTitle(data.title)
+   105→      setDescription(data.description)
+   106→    } catch (err) {
+   107→      setError(err instanceof Error ? err.message : 'Failed to load task')
+   108→    } finally {
+   109→      setLoading(false)
+   110→    }
+   111→  }, [taskId])
+   112→
+   113→  React.useEffect(() => {
+   114→    void apiFetch<CategoryDTO[]>('/api/categories').then(setCategories).catch(() => {})
+   115→    void apiFetch<UserDTO[]>('/api/users').then(setUsers).catch(() => {})
+   116→    void load()
+   117→  }, [load])
+   118→
+   119→  async function patchTask(payload: Record<string, unknown>) {
+   120→    if (!task) return null
+   121→    try {
+   122→      const updated = await apiFetch<TaskDetailDTO>(`/api/tasks/${task.id}`, {
+   123→        method: 'PATCH',
+   124→        body: JSON.stringify(payload),
+   125→      })
+   126→      // Merge to preserve activity logs / comments unless the response includes them
+   127→      setTask((prev) =>
+   128→        prev
+   129→          ? {
+   130→              ...updated,
+   131→              activityLogs: updated.activityLogs?.length ? updated.activityLogs : prev.activityLogs,
+   132→              comments: updated.comments?.length ? updated.comments : prev.comments,
+   133→            }
+   134→          : updated
+   135→      )
+   136→      return updated
+   137→    } catch (err) {
+   138→      toast.error(err instanceof Error ? err.message : 'Update failed')
+   139→      return null
+   140→    }
+   141→  }
+   142→
+   143→  async function handleStatusChange(status: string) {
+   144→    const updated = await patchTask({ status })
+   145→    if (updated) {
+   146→      toast.success(`Status: ${STATUS_META[status as keyof typeof STATUS_META]?.label ?? status}`)
+   147→      // Re-fetch to get new activity logs
+   148→      void load()
+   149→    }
+   150→  }
+   151→
+   152→  async function handleAssigneeChange(value: string) {
+   153→    const assigneeId = value === 'unassigned' ? '' : value
+   154→    const updated = await patchTask({ assigneeId })
+   155→    if (updated) {
+   156→      toast.success(assigneeId ? 'Task assigned' : 'Task unassigned')
+   157→      void load()
+   158→    }
+   159→  }
+   160→
+   161→  async function handleCategoryChange(categoryId: string) {
+   162→    const updated = await patchTask({ categoryId })
+   163→    if (updated) {
+   164→      toast.success('Category updated')
+   165→      void load()
+   166→    }
+   167→  }
+   168→
+   169→  async function handlePriorityChange(priority: string) {
+   170→    const updated = await patchTask({ priority })
+   171→    if (updated) {
+   172→      toast.success('Priority updated')
+   173→      void load()
+   174→    }
+   175→  }
+   176→
+   177→  async function handleDueDateChange(value: string) {
+   178→    const updated = await patchTask({ dueDate: value })
+   179→    if (updated) {
+   180→      toast.success(value ? 'Due date updated' : 'Due date cleared')
+   181→      void load()
+   182→    }
+   183→  }
+   184→
+   185→  async function handleSaveTitle() {
+   186→    if (!task || title.trim() === task.title) return
+   187→    setSavingTitle(true)
+   188→    const updated = await patchTask({ title: title.trim() })
+   189→    setSavingTitle(false)
+   190→    if (updated) toast.success('Title updated')
+   191→  }
+   192→
+   193→  async function handleSaveDescription() {
+   194→    if (!task) return
+   195→    setSavingDesc(true)
+   196→    const updated = await patchTask({ description })
+   197→    setSavingDesc(false)
+   198→    if (updated) toast.success('Description saved')
+   199→  }
+   200→
+   201→  async function handlePostComment() {
+   202→    if (!task || !commentText.trim()) return
+   203→    setPostingComment(true)
+   204→    try {
+   205→      const created = await apiFetch<{ id: string; userName: string }>(
+   206→        `/api/tasks/${task.id}/comments`,
+   207→        {
+   208→          method: 'POST',
+   209→          body: JSON.stringify({ body: commentText.trim() }),
+   210→        }
+   211→      )
+   212→      setCommentText('')
+   213→      toast.success('Comment posted')
+   214→      void load()
+   215→      void created
+   216→    } catch (err) {
+   217→      toast.error(err instanceof Error ? err.message : 'Failed to post comment')
+   218→    } finally {
+   219→      setPostingComment(false)
+   220→    }
+   221→  }
+   222→
+   223→  async function handleMarkReplySent() {
+   224→    const updated = await patchTask({ replySent: true })
+   225→    if (updated) {
+   226→      toast.success('Reply marked as sent')
+   227→      void load()
+   228→    }
+   229→  }
+   230→
+   231→  async function handleMarkDone() {
+   232→    await handleStatusChange('done')
+   233→  }
+   234→
+   235→  async function handleVerifyClose() {
+   236→    await handleStatusChange('closed')
+   237→  }
+   238→
+   239→  async function handleDelete() {
+   240→    if (!task) return
+   241→    try {
+   242→      await apiFetch(`/api/tasks/${task.id}`, { method: 'DELETE' })
+   243→      toast.success('Task deleted')
+   244→      setView('board')
+   245→    } catch (err) {
+   246→      toast.error(err instanceof Error ? err.message : 'Failed to delete')
+   247→    }
+   248→  }
+   249→
+   250→  async function copyReply() {
+   251→    if (!task?.generatedReplyText) return
+   252→    try {
+   253→      await navigator.clipboard.writeText(task.generatedReplyText)
+   254→      toast.success('Reply copied to clipboard')
+   255→    } catch {
+   256→      toast.error('Could not copy to clipboard')
+   257→    }
+   258→  }
+   259→
+   260→  if (loading) {
+   261→    return (
+   262→      <div className="space-y-4">
+   263→        <Skeleton className="h-9 w-32" />
+   264→        <Skeleton className="h-10 w-3/4" />
+   265→        <Skeleton className="h-40 w-full" />
+   266→        <Skeleton className="h-40 w-full" />
+   267→      </div>
+   268→    )
+   269→  }
+   270→  if (error || !task) {
+   271→    return (
+   272→      <Card>
+   273→        <CardContent className="py-8 text-center">
+   274→          <p className="text-sm text-red-600 dark:text-red-400">{error ?? 'Task not found'}</p>
+   275→          <Button variant="outline" size="sm" className="mt-3" onClick={() => setView('board')}>
+   276→            <ArrowLeft className="size-4" />
+   277→            Back to board
+   278→          </Button>
+   279→        </CardContent>
+   280→      </Card>
+   281→    )
+   282→  }
+   283→
+   284→  // Build a timeline combining activityLogs + comments
+   285→  type TimelineItem =
+   286→    | { kind: 'log'; id: string; userName: string | null; content: string; createdAt: string; actionType: string }
+   287→    | { kind: 'comment'; id: string; userName: string; content: string; createdAt: string }
+   288→  const timeline: TimelineItem[] = [
+   289→    ...task.activityLogs.map((l) => ({
+   290→      kind: 'log' as const,
+   291→      id: l.id,
+   292→      userName: l.userName,
+   293→      content: l.content,
+   294→      createdAt: l.createdAt,
+   295→      actionType: l.actionType,
+   296→    })),
+   297→    ...task.comments.map((c) => ({
+   298→      kind: 'comment' as const,
+   299→      id: c.id,
+   300→      userName: c.userName,
+   301→      content: c.body,
+   302→      createdAt: c.createdAt,
+   303→    })),
+   304→  ].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+   305→
+   306→  const canMarkDone =
+   307→    (task.assigneeId === user?.id || isAdmin) &&
+   308→    ['in_progress', 'in_review', 'blocked', 'assigned'].includes(task.status)
+   309→  const canVerifyClose = isAdmin && task.status === 'done'
+   310→
+   311→  return (
+   312→    <div className="space-y-4 pb-4">
+   313→      <div className="flex items-center justify-between gap-2 flex-wrap">
+   314→        <Button variant="ghost" size="sm" onClick={() => setView('board')} className="text-muted-foreground">
+   315→          <ArrowLeft className="size-4" />
+   316→          Back to board
+   317→        </Button>
+   318→        {isAdmin && (
+   319→          <AlertDialog>
+   320→            <AlertDialogTrigger asChild>
+   321→              <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700 dark:text-red-400 border-red-200 hover:border-red-300 dark:border-red-900">
+   322→                <DeleteIcon className="size-4" />
+   323→                Delete Task
+   324→              </Button>
+   325→            </AlertDialogTrigger>
+   326→            <AlertDialogContent>
+   327→              <AlertDialogHeader>
+   328→                <AlertDialogTitle>Delete this task?</AlertDialogTitle>
+   329→                <AlertDialogDescription>
+   330→                  This permanently removes the task and all its activity, comments and notifications. This cannot be undone.
+   331→                </AlertDialogDescription>
+   332→              </AlertDialogHeader>
+   333→              <AlertDialogFooter>
+   334→                <AlertDialogCancel>Cancel</AlertDialogCancel>
+   335→                <AlertDialogAction
+   336→                  className="bg-red-600 hover:bg-red-700 text-white"
+   337→                  onClick={() => void handleDelete()}
+   338→                >
+   339→                  Delete
+   340→                </AlertDialogAction>
+   341→              </AlertDialogFooter>
+   342→            </AlertDialogContent>
+   343→          </AlertDialog>
+   344→        )}
+   345→      </div>
+   346→
+   347→      {/* Header card */}
+   348→      <Card>
+   349→        <CardHeader className="gap-3">
+   350→          <div className="flex items-start gap-2 flex-wrap">
+   351→            <Badge variant="outline" className={STATUS_META[task.status].badgeClass}>
+   352→              <span className={cn('size-1.5 rounded-full', STATUS_META[task.status].dotClass)} />
+   353→              {STATUS_META[task.status].label}
+   354→            </Badge>
+   355→            <CategoryBadge category={{ name: task.categoryName, color: task.categoryColor }} />
+   356→            <PriorityBadge priority={task.priority} />
+   357→            <span className="text-xs text-muted-foreground ml-auto">
+   358→              Created {format(parseISO(task.createdAt), 'MMM d, yyyy')} by {task.createdByName}
+   359→            </span>
+   360→          </div>
+   361→          <div className="flex items-center gap-2 flex-wrap">
+   362→            <Input
+   363→              value={title}
+   364→              onChange={(e) => setTitle(e.target.value)}
+   365→              className="flex-1 min-w-[200px] h-10 text-lg font-semibold border-transparent hover:border-input focus-visible:border-input"
+   366→            />
+   367→            <Button
+   368→              size="sm"
+   369→              variant="outline"
+   370→              onClick={() => void handleSaveTitle()}
+   371→              disabled={savingTitle || title.trim() === task.title}
+   372→            >
+   373→              {savingTitle ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+   374→              Save
+   375→            </Button>
+   376→          </div>
+   377→
+   378→          {/* Inline editable fields */}
+   379→          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+   380→            <div className="space-y-1.5">
+   381→              <Label className="text-xs text-muted-foreground">Status</Label>
+   382→              <Select value={task.status} onValueChange={(v) => void handleStatusChange(v)}>
+   383→                <SelectTrigger className="w-full">
+   384→                  <SelectValue />
+   385→                </SelectTrigger>
+   386→                <SelectContent>
+   387→                  {STATUSES.map((s) => (
+   388→                    <SelectItem key={s} value={s}>
+   389→                      {STATUS_META[s].label}
+   390→                    </SelectItem>
+   391→                  ))}
+   392→                </SelectContent>
+   393→              </Select>
+   394→            </div>
+   395→            <div className="space-y-1.5">
+   396→              <Label className="text-xs text-muted-foreground">Assignee</Label>
+   397→              <Select
+   398→                value={task.assigneeId ?? 'unassigned'}
+   399→                onValueChange={(v) => void handleAssigneeChange(v)}
+   400→              >
+   401→                <SelectTrigger className="w-full">
+   402→                  <SelectValue />
+   403→                </SelectTrigger>
+   404→                <SelectContent>
+   405→                  <SelectItem value="unassigned">Unassigned</SelectItem>
+   406→                  {users.map((u) => (
+   407→                    <SelectItem key={u.id} value={u.id}>
+   408→                      {u.name}
+   409→                    </SelectItem>
+   410→                  ))}
+   411→                </SelectContent>
+   412→              </Select>
+   413→            </div>
+   414→            <div className="space-y-1.5">
+   415→              <Label className="text-xs text-muted-foreground">Category</Label>
+   416→              <Select value={task.categoryId} onValueChange={(v) => void handleCategoryChange(v)}>
+   417→                <SelectTrigger className="w-full">
+   418→                  <SelectValue />
+   419→                </SelectTrigger>
+   420→                <SelectContent>
+   421→                  {categories.map((c) => (
+   422→                    <SelectItem key={c.id} value={c.id}>
+   423→                      {c.name}
+   424→                    </SelectItem>
+   425→                  ))}
+   426→                </SelectContent>
+   427→              </Select>
+   428→            </div>
+   429→            <div className="space-y-1.5">
+   430→              <Label className="text-xs text-muted-foreground">Priority</Label>
+   431→              <Select value={task.priority} onValueChange={(v) => void handlePriorityChange(v)}>
+   432→                <SelectTrigger className="w-full capitalize">
+   433→                  <SelectValue />
+   434→                </SelectTrigger>
+   435→                <SelectContent>
+   436→                  {PRIORITIES.map((p) => (
+   437→                    <SelectItem key={p} value={p} className="capitalize">
+   438→                      {p}
+   439→                    </SelectItem>
+   440→                  ))}
+   441→                </SelectContent>
+   442→              </Select>
+   443→            </div>
+   444→            <div className="space-y-1.5 sm:col-span-2 lg:col-span-4">
+   445→              <Label className="text-xs text-muted-foreground flex items-center gap-1">
+   446→                <CalendarDays className="size-3" /> Due date
+   447→              </Label>
+   448→              <Input
+   449→                type="date"
+   450→                value={task.dueDate ? task.dueDate.slice(0, 10) : ''}
+   451→                onChange={(e) => void handleDueDateChange(e.target.value)}
+   452→              />
+   453→            </div>
+   454→          </div>
+   455→        </CardHeader>
+   456→      </Card>
+   457→
+   458→      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+   459→        {/* Left/main column: description + email/reply + timeline */}
+   460→        <div className="lg:col-span-2 space-y-4">
+   461→          {/* Description */}
+   462→          <Card>
+   463→            <CardHeader className="pb-3">
+   464→              <CardTitle className="text-base">Description</CardTitle>
+   465→              <CardDescription>Add details, links, scope notes, etc.</CardDescription>
+   466→            </CardHeader>
+   467→            <CardContent className="space-y-3">
+   468→              <Textarea
+   469→                value={description}
+   470→                onChange={(e) => setDescription(e.target.value)}
+   471→                rows={5}
+   472→                placeholder="Describe what needs to be done…"
+   473→              />
+   474→              <div className="flex justify-end">
+   475→                <Button
+   476→                  size="sm"
+   477→                  onClick={() => void handleSaveDescription()}
+   478→                  disabled={savingDesc || description === task.description}
+   479→                >
+   480→                  {savingDesc ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+   481→                  Save description
+   482→                </Button>
+   483→              </div>
+   484→            </CardContent>
+   485→          </Card>
+   486→
+   487→          {/* Original email (if any) */}
+   488→          {task.sourceEmailText && (
+   489→            <Card>
+   490→              <Collapsible open={replyExpanded} onOpenChange={setReplyExpanded}>
+   491→                <CardHeader className="pb-3">
+   492→                  <CollapsibleTrigger asChild>
+   493→                    <button className="flex items-center justify-between w-full text-left group">
+   494→                      <CardTitle className="text-base flex items-center gap-2">
+   495→                        <Mail className="size-4 text-emerald-600 dark:text-emerald-400" />
+   496→                        Original Email
+   497→                      </CardTitle>
+   498→                      <span className="text-xs text-muted-foreground group-hover:text-foreground">
+   499→                        {replyExpanded ? 'Hide' : 'Show'}
+   500→                      </span>
+   501→                    </button>
+   502→                  </CollapsibleTrigger>
+   503→                  {task.sourceSender && (
+   504→                    <CardDescription>From {task.sourceSender}</CardDescription>
+   505→                  )}
+   506→                </CardHeader>
+   507→                <CollapsibleContent>
+   508→                  <CardContent>
+   509→                    <pre className="whitespace-pre-wrap font-sans text-sm bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-3 max-h-80 overflow-y-auto">
+   510→                      {task.sourceEmailText}
+   511→                    </pre>
+   512→                  </CardContent>
+   513→                </CollapsibleContent>
+   514→              </Collapsible>
+   515→            </Card>
+   516→          )}
+   517→
+   518→          {/* Generated reply (if any) */}
+   519→          {task.generatedReplyText && (
+   520→            <Card>
+   521→              <CardHeader className="pb-3">
+   522→                <div className="flex items-center justify-between gap-2 flex-wrap">
+   523→                  <CardTitle className="text-base flex items-center gap-2">
+   524→                    <MessageSquare className="size-4 text-emerald-600 dark:text-emerald-400" />
+   525→                    Generated Reply
+   526→                  </CardTitle>
+   527→                  {task.replySent ? (
+   528→                    <Badge className="bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-900">
+   529→                      <CheckCircle2 className="size-3" />
+   530→                      Reply Sent
+   531→                    </Badge>
+   532→                  ) : (
+   533→                    <Badge className="bg-orange-100 text-orange-700 border border-orange-200 dark:bg-orange-950/60 dark:text-orange-300 dark:border-orange-900">
+   534→                      Pending
+   535→                    </Badge>
+   536→                  )}
+   537→                </div>
+   538→              </CardHeader>
+   539→              <CardContent className="space-y-3">
+   540→                <pre className="whitespace-pre-wrap font-sans text-sm bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-3 max-h-60 overflow-y-auto">
+   541→                  {task.generatedReplyText}
+   542→                </pre>
+   543→                <div className="flex items-center gap-2 flex-wrap">
+   544→                  <Button size="sm" variant="outline" onClick={() => void copyReply()}>
+   545→                    <ClipboardCopy className="size-4" />
+   546→                    Copy Reply
+   547→                  </Button>
+   548→                  {!task.replySent && (
+   549→                    <Button
+   550→                      size="sm"
+   551→                      className="bg-emerald-600 hover:bg-emerald-700"
+   552→                      onClick={() => void handleMarkReplySent()}
+   553→                    >
+   554→                      <Check className="size-4" />
+   555→                      Mark as Sent
+   556→                    </Button>
+   557→                  )}
+   558→                </div>
+   559→              </CardContent>
+   560→            </Card>
+   561→          )}
+   562→
+   563→          {/* Activity & Comments */}
+   564→          <Card>
+   565→            <CardHeader className="pb-3">
+   566→              <CardTitle className="text-base flex items-center gap-2">
+   567→                <History className="size-4 text-emerald-600 dark:text-emerald-400" />
+   568→                Activity &amp; Comments
+   569→              </CardTitle>
+   570→              <CardDescription>{timeline.length} events</CardDescription>
+   571→            </CardHeader>
+   572→            <CardContent className="space-y-3">
+   573→              {timeline.length === 0 ? (
+   574→                <p className="text-sm text-muted-foreground py-4 text-center">No activity yet.</p>
+   575→              ) : (
+   576→                <ol className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
+   577→                  {timeline.map((item) => {
+   578→                    const date = parseISO(item.createdAt)
+   579→                    return (
+   580→                      <li key={`${item.kind}-${item.id}`} className="flex gap-3">
+   581→                        <div className="flex flex-col items-center">
+   582→                          {item.kind === 'comment' ? (
+   583→                            <UserAvatar name={item.userName} size="sm" />
+   584→                          ) : (
+   585→                            <span className="flex size-7 items-center justify-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+   586→                              <Clock className="size-3" />
+   587→                            </span>
+   588→                          )}
+   589→                          <span className="w-px flex-1 bg-slate-200 dark:bg-slate-800 mt-1" />
+   590→                        </div>
+   591→                        <div className="flex-1 min-w-0 pb-1">
+   592→                          <p className="text-sm">
+   593→                            <span className="font-medium text-foreground">
+   594→                              {item.userName ?? 'System'}
+   595→                            </span>{' '}
+   596→                            {item.kind === 'comment' ? (
+   597→                              <span className="text-muted-foreground">commented</span>
+   598→                            ) : null}
+   599→                          </p>
+   600→                          <p
+   601→                            className={cn(
+   602→                              'text-sm mt-0.5 rounded-lg p-2',
+   603→                              item.kind === 'comment'
+   604→                                ? 'bg-emerald-50 text-slate-800 dark:bg-emerald-950/30 dark:text-slate-200 border border-emerald-100 dark:border-emerald-900/50'
+   605→                                : 'text-muted-foreground'
+   606→                            )}
+   607→                          >
+   608→                            {item.content}
+   609→                          </p>
+   610→                          <p className="text-[11px] text-muted-foreground mt-1" title={format(date, 'PPpp')}>
+   611→                            {formatDistanceToNow(date, { addSuffix: true })}
+   612→                          </p>
+   613→                        </div>
+   614→                      </li>
+   615→                    )
+   616→                  })}
+   617→                </ol>
+   618→              )}
+   619→              <div className="border-t pt-3 space-y-2">
+   620→                <Textarea
+   621→                  placeholder="Write a comment…"
+   622→                  value={commentText}
+   623→                  onChange={(e) => setCommentText(e.target.value)}
+   624→                  rows={2}
+   625→                  className="resize-none"
+   626→                />
+   627→                <div className="flex justify-end">
+   628→                  <Button
+   629→                    size="sm"
+   630→                    onClick={() => void handlePostComment()}
+   631→                    disabled={postingComment || !commentText.trim()}
+   632→                  >
+   633→                    {postingComment ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+   634→                    Send
+   635→                  </Button>
+   636→                </div>
+   637→              </div>
+   638→            </CardContent>
+   639→          </Card>
+   640→        </div>
+   641→
+   642→        {/* Right column: actions / metadata */}
+   643→        <div className="space-y-4">
+   644→          <Card>
+   645→            <CardHeader className="pb-3">
+   646→              <CardTitle className="text-base">Actions</CardTitle>
+   647→              <CardDescription>Move this task forward.</CardDescription>
+   648→            </CardHeader>
+   649→            <CardContent className="space-y-2">
+   650→              {canMarkDone && (
+   651→                <Button
+   652→                  className="w-full bg-emerald-600 hover:bg-emerald-700"
+   653→                  onClick={() => void handleMarkDone()}
+   654→                >
+   655→                  <CheckCircle2 className="size-4" />
+   656→                  Mark as Done
+   657→                </Button>
+   658→              )}
+   659→              {canVerifyClose && (
+   660→                <Button
+   661→                  className="w-full bg-emerald-600 hover:bg-emerald-700"
+   662→                  onClick={() => void handleVerifyClose()}
+   663→                >
+   664→                  <ShieldCheck className="size-4" />
+   665→                  Verify &amp; Close
+   666→                </Button>
+   667→              )}
+   668→              {!canMarkDone && !canVerifyClose && (
+   669→                <p className="text-sm text-muted-foreground text-center py-4">
+   670→                  {task.status === 'closed'
+   671→                    ? 'This task is closed.'
+   672→                    : task.status === 'done'
+   673→                      ? 'Awaiting admin verification to close.'
+   674→                      : 'No quick actions available for this status.'}
+   675→                </p>
+   676→              )}
+   677→            </CardContent>
+   678→          </Card>
+   679→
+   680→          <Card>
+   681→            <CardHeader className="pb-3">
+   682→              <CardTitle className="text-base">Details</CardTitle>
+   683→            </CardHeader>
+   684→            <CardContent className="space-y-3 text-sm">
+   685→              <div className="flex items-center justify-between gap-2">
+   686→                <span className="text-muted-foreground flex items-center gap-1.5">
+   687→                  <UserIcon className="size-3.5" /> Assignee
+   688→                </span>
+   689→                <div className="flex items-center gap-2 min-w-0">
+   690→                  {task.assigneeName ? (
+   691→                    <>
+   692→                      <UserAvatar name={task.assigneeName} size="sm" />
+   693→                      <span className="font-medium truncate">{task.assigneeName}</span>
+   694→                    </>
+   695→                  ) : (
+   696→                    <span className="text-muted-foreground italic">Unassigned</span>
+   697→                  )}
+   698→                </div>
+   699→              </div>
+   700→              <div className="flex items-center justify-between gap-2">
+   701→                <span className="text-muted-foreground flex items-center gap-1.5">
+   702→                  <CalendarDays className="size-3.5" /> Due
+   703→                </span>
+   704→                <span className="font-medium">
+   705→                  {task.dueDate ? format(parseISO(task.dueDate), 'MMM d, yyyy') : '—'}
+   706→                </span>
+   707→              </div>
+   708→              <div className="flex items-center justify-between gap-2">
+   709→                <span className="text-muted-foreground">Status</span>
+   710→                <StatusBadge status={task.status} />
+   711→              </div>
+   712→              <div className="flex items-center justify-between gap-2">
+   713→                <span className="text-muted-foreground">Priority</span>
+   714→                <PriorityBadge priority={task.priority} />
+   715→              </div>
+   716→              {task.closedAt && (
+   717→                <div className="flex items-center justify-between gap-2">
+   718→                  <span className="text-muted-foreground">Closed</span>
+   719→                  <span className="font-medium text-xs">
+   720→                    {format(parseISO(task.closedAt), 'MMM d, yyyy p')}
+   721→                  </span>
+   722→                </div>
+   723→              )}
+   724→              <div className="flex items-center justify-between gap-2">
+   725→                <span className="text-muted-foreground">Updated</span>
+   726→                <span className="text-xs">
+   727→                  {formatDistanceToNow(parseISO(task.updatedAt), { addSuffix: true })}
+   728→                </span>
+   729→              </div>
+   730→            </CardContent>
+   731→          </Card>
+   732→        </div>
+   733→      </div>
+   734→    </div>
+   735→  )
+   736→}
+   737→

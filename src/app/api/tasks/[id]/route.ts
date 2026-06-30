@@ -1,14 +1,28 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requireAdmin, requireUser } from '@/lib/auth'
-import { apiCatch, jsonError, taskToDTO, TASK_INCLUDES } from '@/lib/api-helpers'
+import {
+  apiCatch,
+  jsonError,
+  taskToDTO,
+  TASK_INCLUDES,
+  TASK_DETAIL_INCLUDES,
+} from '@/lib/api-helpers'
 import {
   PRIORITIES,
   PRIORITY_META,
   STATUS_META,
   STATUSES,
 } from '@/lib/types'
-import type { ActivityLogDTO, CommentDTO, Priority, TaskDTO, TaskDetailDTO, TaskStatus } from '@/lib/types'
+import type {
+  ActivityLogDTO,
+  CommentDTO,
+  FollowUpDTO,
+  Priority,
+  TaskDTO,
+  TaskDetailDTO,
+  TaskStatus,
+} from '@/lib/types'
 
 async function assertTaskAccess(taskId: string, currentUser: { id: string; role: string }) {
   const task = await db.task.findUnique({
@@ -33,26 +47,20 @@ export async function GET(
   try {
     const currentUser = await requireUser()
     const { id } = await params
-    const task = await assertTaskAccess(id, currentUser)
-    if (!task) return jsonError('Task not found', 404)
-    if ('forbidden' in task && task.forbidden) return jsonError('Forbidden', 403)
+    const access = await assertTaskAccess(id, currentUser)
+    if (!access) return jsonError('Task not found', 404)
+    if ('forbidden' in access && access.forbidden) return jsonError('Forbidden', 403)
 
-    const [activityLogs, comments] = await Promise.all([
-      db.activityLog.findMany({
-        where: { taskId: id },
-        orderBy: { createdAt: 'asc' },
-        include: { user: { select: { name: true } } },
-      }),
-      db.comment.findMany({
-        where: { taskId: id },
-        orderBy: { createdAt: 'asc' },
-        include: { user: { select: { name: true } } },
-      }),
-    ])
+    // Fetch with the full detail includes (activityLogs + comments + followUps)
+    const task = await db.task.findUnique({
+      where: { id },
+      include: TASK_DETAIL_INCLUDES,
+    })
+    if (!task) return jsonError('Task not found', 404)
 
     const dto: TaskDetailDTO = {
       ...taskToDTO(task),
-      activityLogs: activityLogs.map<ActivityLogDTO>((l) => ({
+      activityLogs: task.activityLogs.map<ActivityLogDTO>((l) => ({
         id: l.id,
         taskId: l.taskId,
         userId: l.userId,
@@ -61,13 +69,22 @@ export async function GET(
         content: l.content,
         createdAt: l.createdAt.toISOString(),
       })),
-      comments: comments.map<CommentDTO>((c) => ({
+      comments: task.comments.map<CommentDTO>((c) => ({
         id: c.id,
         taskId: c.taskId,
         userId: c.userId,
         userName: c.user?.name ?? '',
         body: c.body,
         createdAt: c.createdAt.toISOString(),
+      })),
+      followUps: task.followUps.map<FollowUpDTO>((f) => ({
+        id: f.id,
+        taskId: f.taskId,
+        type: f.type,
+        message: f.message,
+        sentToUserId: f.sentToUserId,
+        sentToUserName: f.sentTo?.name ?? null,
+        createdAt: f.createdAt.toISOString(),
       })),
     }
     return NextResponse.json(dto)
@@ -214,6 +231,25 @@ export async function PATCH(
       }
     }
 
+    // --- branchId ---
+    if (body.branchId !== undefined) {
+      const incoming: string | null =
+        typeof body.branchId === 'string' && body.branchId.length > 0
+          ? body.branchId
+          : null
+      if (incoming !== existing.branchId) {
+        if (incoming) {
+          const branch = await db.branch.findUnique({ where: { id: incoming } })
+          if (!branch) return jsonError('branchId does not exist', 400)
+          data.branchId = incoming
+          logs.push({ actionType: 'title_change', content: `Branch set to ${branch.name}` })
+        } else {
+          data.branchId = null
+          logs.push({ actionType: 'title_change', content: 'Branch cleared' })
+        }
+      }
+    }
+
     // --- generatedReplyText ---
     if (
       typeof body.generatedReplyText === 'string' &&
@@ -229,6 +265,70 @@ export async function PATCH(
       logs.push({ actionType: 'reply_sent', content: 'Reply marked as sent' })
     } else if (typeof body.replySent === 'boolean' && !body.replySent) {
       data.replySent = false
+    }
+
+    // --- isRenewal ---
+    if (typeof body.isRenewal === 'boolean' && body.isRenewal !== existing.isRenewal) {
+      data.isRenewal = body.isRenewal
+      if (body.isRenewal) {
+        logs.push({ actionType: 'renewal_alert', content: 'Task marked as renewal' })
+      } else {
+        logs.push({ actionType: 'renewal_alert', content: 'Renewal flag removed' })
+      }
+    }
+
+    // --- renewalExpiryDate ---
+    if (body.renewalExpiryDate !== undefined) {
+      const incoming: Date | null =
+        typeof body.renewalExpiryDate === 'string' && body.renewalExpiryDate.length > 0
+          ? new Date(body.renewalExpiryDate)
+          : null
+      const existingExpiry = existing.renewalExpiryDate
+        ? existing.renewalExpiryDate.toISOString()
+        : null
+      const incomingIso = incoming ? incoming.toISOString() : null
+      if (incomingIso !== existingExpiry) {
+        data.renewalExpiryDate = incoming
+        logs.push({
+          actionType: 'renewal_alert',
+          content: incoming
+            ? `Renewal expiry set to ${incoming.toISOString()}`
+            : 'Renewal expiry cleared',
+        })
+      }
+    }
+
+    // --- renewalProvider ---
+    if (body.renewalProvider !== undefined) {
+      const incoming: string | null =
+        typeof body.renewalProvider === 'string' ? body.renewalProvider : null
+      if (incoming !== existing.renewalProvider) {
+        data.renewalProvider = incoming
+        logs.push({
+          actionType: 'renewal_alert',
+          content: incoming
+            ? `Renewal provider set to ${incoming}`
+            : 'Renewal provider cleared',
+        })
+      }
+    }
+
+    // --- followUpFrequencyHours ---
+    if (body.followUpFrequencyHours !== undefined) {
+      const incoming: number | null =
+        typeof body.followUpFrequencyHours === 'number' &&
+        Number.isFinite(body.followUpFrequencyHours)
+          ? Math.max(0, Math.floor(body.followUpFrequencyHours))
+          : null
+      if (incoming !== existing.followUpFrequencyHours) {
+        data.followUpFrequencyHours = incoming
+        logs.push({
+          actionType: 'follow_up',
+          content: incoming
+            ? `Follow-up frequency set to ${incoming}h`
+            : 'Follow-up frequency cleared',
+        })
+      }
     }
 
     const updated = await db.task.update({ where: { id }, data, include: TASK_INCLUDES })
@@ -271,7 +371,7 @@ export async function DELETE(
     const { id } = await params
     const existing = await db.task.findUnique({ where: { id } })
     if (!existing) return jsonError('Task not found', 404)
-    // Hard delete — cascades to ActivityLog, Comment (onDelete: Cascade).
+    // Hard delete — cascades to ActivityLog, Comment, FollowUp (onDelete: Cascade).
     // Notifications have no cascade defined but will be cleaned up explicitly.
     await db.notification.deleteMany({ where: { taskId: id } })
     await db.task.delete({ where: { id } })

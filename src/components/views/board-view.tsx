@@ -18,9 +18,11 @@ import { CSS } from '@dnd-kit/utilities'
 import { format, isPast, isToday, parseISO } from 'date-fns'
 import {
   AlertCircle,
+  Landmark,
   LayoutGrid,
   List,
   RefreshCw,
+  RotateCw,
   Search,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -38,6 +40,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Table,
   TableBody,
@@ -46,7 +49,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Label } from '@/components/ui/label'
 import { CategoryBadge, PriorityBadge, StatusBadge, UserAvatar, OverduePill } from '@/components/ui-badges'
+import { RenewalBadge, isRenewalSoonOrExpired } from '@/components/renewal-badge'
 import { apiFetch, ApiError } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import {
@@ -66,6 +71,7 @@ type Filters = {
   assigneeId: string
   priority: string
   q: string
+  isRenewal: boolean
 }
 
 export function BoardView() {
@@ -81,6 +87,7 @@ export function BoardView() {
     assigneeId: 'all',
     priority: 'all',
     q: '',
+    isRenewal: false,
   })
   const [categories, setCategories] = React.useState<CategoryDTO[]>([])
   const [users, setUsers] = React.useState<UserDTO[]>([])
@@ -101,6 +108,7 @@ export function BoardView() {
       if (isAdmin && filters.assigneeId !== 'all') params.set('assigneeId', filters.assigneeId)
       if (filters.priority !== 'all') params.set('priority', filters.priority)
       if (filters.q.trim()) params.set('q', filters.q.trim())
+      if (filters.isRenewal) params.set('isRenewal', 'true')
       const qs = params.toString()
       const url = `/api/tasks${qs ? `?${qs}` : ''}`
       const data = await apiFetch<TaskDTO[]>(url)
@@ -259,6 +267,19 @@ export function BoardView() {
                 ))}
               </SelectContent>
             </Select>
+            <label
+              className="flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-medium cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900"
+              title="Show only renewal tasks"
+            >
+              <Checkbox
+                checked={filters.isRenewal}
+                onCheckedChange={(v) => setFilters((f) => ({ ...f, isRenewal: v === true }))}
+              />
+              <span className="flex items-center gap-1">
+                <RotateCw className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                Renewals only
+              </span>
+            </label>
           </div>
         </CardContent>
       </Card>
@@ -333,6 +354,7 @@ export function BoardView() {
                   <TableHead className="hidden sm:table-cell">Assignee</TableHead>
                   <TableHead>Priority</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="hidden xl:table-cell">Branch</TableHead>
                   <TableHead className="hidden lg:table-cell">Due</TableHead>
                   <TableHead className="hidden lg:table-cell">Created</TableHead>
                 </TableRow>
@@ -350,6 +372,13 @@ export function BoardView() {
                       <TableCell className="max-w-[260px]">
                         <div className="flex items-center gap-2">
                           <span className="font-medium truncate">{t.title}</span>
+                          {t.isRenewal && (
+                            <RenewalBadge
+                              renewalExpiryDate={t.renewalExpiryDate}
+                              variant="compact"
+                              className="shrink-0"
+                            />
+                          )}
                           {t.commentCount ? (
                             <span className="hidden sm:inline-flex shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                               {t.commentCount} 💬
@@ -377,6 +406,16 @@ export function BoardView() {
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={t.status} />
+                      </TableCell>
+                      <TableCell className="hidden xl:table-cell">
+                        {t.branchName ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            <Landmark className="size-3" />
+                            {t.branchName}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="hidden lg:table-cell text-sm">
                         {due ? (
@@ -505,6 +544,13 @@ function TaskCard({
         <p className="text-sm font-medium leading-snug line-clamp-2 text-slate-900 dark:text-slate-100">
           {task.title}
         </p>
+        {task.isRenewal && (
+          <RenewalBadge
+            renewalExpiryDate={task.renewalExpiryDate}
+            variant="compact"
+            className="shrink-0"
+          />
+        )}
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <CategoryBadge category={{ name: task.categoryName, color: task.categoryColor }} />
@@ -541,6 +587,24 @@ function TaskCard({
           </div>
         )}
       </div>
+      {(task.branchName || (task.isRenewal && isRenewalSoonOrExpired(task.renewalExpiryDate))) && (
+        <div className="mt-2 flex items-center gap-2 flex-wrap">
+          {task.branchName && (
+            <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+              <Landmark className="size-3" />
+              {task.branchName}
+            </span>
+          )}
+          {task.isRenewal && isRenewalSoonOrExpired(task.renewalExpiryDate) && (
+            <span className="inline-flex items-center gap-1 text-[10px] text-red-600 dark:text-red-400 font-medium">
+              <RotateCw className="size-3" />
+              {task.renewalExpiryDate
+                ? `Expires ${format(parseISO(task.renewalExpiryDate), 'MMM d')}`
+                : 'Expires soon'}
+            </span>
+          )}
+        </div>
+      )}
       {task.commentCount ? (
         <div className="absolute top-2 right-2 text-[10px] font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 rounded-full px-1.5 py-0.5">
           {task.commentCount} 💬

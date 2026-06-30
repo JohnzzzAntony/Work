@@ -17,17 +17,25 @@ type TaskWithIncludes = {
   status: string
   assigneeId: string | null
   createdById: string
+  branchId: string | null
   sourceEmailText: string | null
   sourceSender: string | null
   generatedReplyText: string | null
   replySent: boolean
   dueDate: Date | null
+  isRenewal: boolean
+  renewalExpiryDate: Date | null
+  renewalProvider: string | null
+  followUpFrequencyHours: number | null
+  lastFollowUpAt: Date | null
+  followUpCount: number
   createdAt: Date
   updatedAt: Date
   closedAt: Date | null
   category: { id: string; name: string; color: string } | null
   assignee: { id: string; name: string } | null
-  createdBy: { id: string; name: string }
+  createdBy: { id: string; name: string } | null
+  branch: { id: string; name: string; type: string } | null
   _count?: { comments?: number }
 }
 
@@ -48,11 +56,19 @@ export function taskToDTO(task: TaskWithIncludes): TaskDTO {
     assigneeName: task.assignee?.name ?? null,
     createdById: task.createdById,
     createdByName: task.createdBy?.name ?? '',
+    branchId: task.branchId,
+    branchName: task.branch?.name ?? null,
     sourceEmailText: task.sourceEmailText,
     sourceSender: task.sourceSender,
     generatedReplyText: task.generatedReplyText,
     replySent: task.replySent,
     dueDate: task.dueDate ? task.dueDate.toISOString() : null,
+    isRenewal: task.isRenewal,
+    renewalExpiryDate: task.renewalExpiryDate ? task.renewalExpiryDate.toISOString() : null,
+    renewalProvider: task.renewalProvider,
+    followUpFrequencyHours: task.followUpFrequencyHours,
+    lastFollowUpAt: task.lastFollowUpAt ? task.lastFollowUpAt.toISOString() : null,
+    followUpCount: task.followUpCount,
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
     closedAt: task.closedAt ? task.closedAt.toISOString() : null,
@@ -65,7 +81,25 @@ export const TASK_INCLUDES = {
   category: { select: { id: true, name: true, color: true } },
   assignee: { select: { id: true, name: true } },
   createdBy: { select: { id: true, name: true } },
+  branch: { select: { id: true, name: true, type: true } },
   _count: { select: { comments: true } },
+} as const
+
+/** Prisma include shape for task detail (with activity logs, comments, follow-ups). */
+export const TASK_DETAIL_INCLUDES = {
+  ...TASK_INCLUDES,
+  activityLogs: {
+    orderBy: { createdAt: 'asc' as const },
+    include: { user: { select: { name: true } } },
+  },
+  comments: {
+    orderBy: { createdAt: 'asc' as const },
+    include: { user: { select: { name: true } } },
+  },
+  followUps: {
+    orderBy: { createdAt: 'desc' as const },
+    include: { sentTo: { select: { name: true } } },
+  },
 } as const
 
 /**
