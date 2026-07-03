@@ -4,7 +4,13 @@
 import { PrismaClient } from '@prisma/client'
 import { hashPassword } from '../src/lib/auth'
 
-const db = new PrismaClient()
+const db = new PrismaClient({
+  datasources: {
+    db: {
+      url: process.env.DIRECT_URL || process.env.DATABASE_URL
+    }
+  }
+})
 
 // Department seeds — each gets a distinct color
 const DEPARTMENT_SEED = [
