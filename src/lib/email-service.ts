@@ -462,6 +462,22 @@ function fallbackSummaryParser(text: string): LlmParsedTask[] {
     }
   }
   flush()
+
+  // If no numbered lists were detected, treat the entire text as a single task
+  if (tasks.length === 0 && text.trim().length > 0) {
+    const cleanLines = text.split('\n').map(l => l.trim()).filter(Boolean)
+    // Use the first substantive line as the title, or a generic title
+    const firstLine = cleanLines.find(l => !l.toLowerCase().startsWith('hi') && !l.toLowerCase().startsWith('dear') && l.length > 5) || cleanLines[0]
+    
+    tasks.push({
+      title: (firstLine || 'New Task from Email').slice(0, 90),
+      category: detectCategory(text),
+      priority: detectPriority(text),
+      description: text.trim(),
+      dueDateHint: null,
+    })
+  }
+
   return tasks.slice(0, 20)
 }
 
