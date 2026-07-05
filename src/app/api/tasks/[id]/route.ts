@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireAdmin, requireUser } from '@/lib/auth'
+import { requireAdmin, requireUser, requireCronOrAdmin } from '@/lib/auth'
 import {
   apiCatch,
   jsonError,
@@ -98,7 +98,13 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const currentUser = await requireUser()
+    const cronUser = await requireCronOrAdmin(request)
+    const currentUser = cronUser
+    const isSystem = !currentUser
+    const userId = currentUser?.id || null
+    const userName = currentUser?.name || 'System'
+    const userRole = currentUser?.role || 'admin'
+
     const { id } = await params
     const body = await request.json().catch(() => null)
     if (!body || typeof body !== 'object') return jsonError('Invalid body', 400)
@@ -109,9 +115,10 @@ export async function PATCH(
     })
     if (!existing) return jsonError('Task not found', 404)
     if (
-      currentUser.role !== 'admin' &&
-      existing.assigneeId !== currentUser.id &&
-      existing.createdById !== currentUser.id
+      !isSystem &&
+      userRole !== 'admin' &&
+      existing.assigneeId !== userId &&
+      existing.createdById !== userId
     ) {
       return jsonError('Forbidden', 403)
     }
@@ -167,11 +174,11 @@ export async function PATCH(
         content: `Status changed: ${oldLabel} → ${newLabel}`,
       })
       // Notify creator when marked done (needs verification)
-      if (body.status === 'done' && existing.createdById !== currentUser.id) {
+      if (body.status === 'done' && existing.createdById !== userId) {
         notifications.push({
           userId: existing.createdById,
           type: 'done_needs_verification',
-          message: `"${existing.title}" marked Done by ${currentUser.name} — needs your verification`,
+          message: `"${existing.title}" marked Done by ${userName} — needs your verification`,
         })
       }
       // Set closedAt + log when closing
@@ -200,7 +207,7 @@ export async function PATCH(
             actionType: 'assigned',
             content: `Assigned to ${assignee.name}`,
           })
-          if (incoming !== currentUser.id) {
+          if (incoming !== userId) {
             notifications.push({
               userId: incoming,
               type: 'assigned',
@@ -338,7 +345,7 @@ export async function PATCH(
       await db.activityLog.createMany({
         data: logs.map((l) => ({
           taskId: id,
-          userId: currentUser.id,
+          userId: userId,
           actionType: l.actionType,
           content: l.content,
         })),

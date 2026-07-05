@@ -51,6 +51,7 @@ export function DashboardView() {
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [runningChecks, setRunningChecks] = React.useState(false)
+  const [simulating, setSimulating] = React.useState(false)
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -89,6 +90,23 @@ export function DashboardView() {
     }
   }
 
+  async function handleTriggerSimulation() {
+    setSimulating(true)
+    try {
+      const result = await apiFetch<{ ok: boolean; simulated: { subject: string } }>(
+        '/api/email/simulate',
+        { method: 'POST' }
+      )
+      toast.success(`Simulated email received: "${result.simulated?.subject || 'New email'}"`)
+      void load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to trigger simulation')
+    } finally {
+      setSimulating(false)
+    }
+  }
+
+
   // Sort renewals by daysUntilExpiry ascending
   const sortedRenewals = React.useMemo(() => {
     if (!data?.upcomingRenewals) return []
@@ -108,19 +126,31 @@ export function DashboardView() {
         </div>
         <div className="flex items-center gap-2">
           {isAdmin && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void handleRunChecks()}
-              disabled={runningChecks || loading}
-            >
-              {runningChecks ? (
-                <RefreshCw className="size-4 animate-spin" />
-              ) : (
-                <PlayCircle className="size-4" />
-              )}
-              Run Checks Now
-            </Button>
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void handleTriggerSimulation()}
+                disabled={simulating || loading}
+                className="text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
+              >
+                <Send className={cn('size-4', simulating && 'animate-pulse')} />
+                Trigger Simulated Email
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void handleRunChecks()}
+                disabled={runningChecks || loading}
+              >
+                {runningChecks ? (
+                  <RefreshCw className="size-4 animate-spin" />
+                ) : (
+                  <PlayCircle className="size-4" />
+                )}
+                Run Checks Now
+              </Button>
+            </>
           )}
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
