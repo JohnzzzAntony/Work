@@ -77,15 +77,36 @@ export function SettingsView() {
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
 
+  // Outlook 365 Integration States
+  const [outlookSettings, setOutlookSettings] = React.useState<{
+    outlookSimulation: boolean
+    outlookTenantId: string
+    outlookClientId: string
+    outlookClientSecret: string
+    outlookUserEmail: string
+    outlookAccessToken: string
+    outlookAutoReply: boolean
+    outlookPollIntervalSeconds: number
+  } | null>(null)
+  const [testingOutlook, setTestingOutlook] = React.useState(false)
+  const [outlookTestResult, setOutlookTestResult] = React.useState<{
+    ok: boolean
+    message?: string
+    error?: string
+    user?: { displayName: string; mail: string }
+  } | null>(null)
+
   const load = React.useCallback(async () => {
     setLoading(true)
     try {
-      const [s, c] = await Promise.all([
+      const [s, c, o] = await Promise.all([
         apiFetch<Settings>('/api/settings'),
         apiFetch<CategoryDTO[]>('/api/categories'),
+        apiFetch<any>('/api/settings/outlook').catch(() => null),
       ])
       setSettings(s as Settings)
       setCategories(c)
+      if (o) setOutlookSettings(o)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load settings')
     } finally {
@@ -117,16 +138,54 @@ export function SettingsView() {
     if (!settings) return
     setSaving(true)
     try {
-      const updated = await apiFetch<Settings>('/api/settings', {
-        method: 'PATCH',
-        body: JSON.stringify(settings),
-      })
+      const promises: Promise<any>[] = [
+        apiFetch<Settings>('/api/settings', {
+          method: 'PATCH',
+          body: JSON.stringify(settings),
+        })
+      ]
+      if (outlookSettings) {
+        promises.push(
+          apiFetch('/api/settings/outlook', {
+            method: 'POST',
+            body: JSON.stringify(outlookSettings),
+          })
+        )
+      }
+      const [updated] = await Promise.all(promises)
       setSettings(updated as Settings)
       toast.success('Settings saved')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleTestOutlook() {
+    if (!outlookSettings) return
+    setTestingOutlook(true)
+    setOutlookTestResult(null)
+    try {
+      const res = await apiFetch<any>('/api/settings/outlook/test', {
+        method: 'POST',
+        body: JSON.stringify(outlookSettings),
+      })
+      setOutlookTestResult(res)
+      if (res.ok) {
+        toast.success(
+          res.message ||
+            `Connected! User: ${res.user?.displayName || 'Success'}`
+        )
+      } else {
+        toast.error(res.error || 'Connection test failed')
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to test connection'
+      setOutlookTestResult({ ok: false, error: msg })
+      toast.error(msg)
+    } finally {
+      setTestingOutlook(false)
     }
   }
 
@@ -386,6 +445,164 @@ export function SettingsView() {
               />
             </CardContent>
           </Card>
+
+          {/* Outlook 365 Integration */}
+          {outlookSettings && (
+            <Card className="lg:col-span-2 border-slate-200 dark:border-slate-800">
+              <CardHeader className="pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <RotateCw className="size-4 text-emerald-600 dark:text-emerald-400" />
+                      Outlook 365 Integration
+                    </CardTitle>
+                    <CardDescription>
+                      Fetch emails automatically and convert them to tasks using AI models.
+                    </CardDescription>
+                  </div>
+                  <Badge variant={outlookSettings.outlookSimulation ? 'secondary' : 'default'} className="text-xs">
+                    {outlookSettings.outlookSimulation ? 'Simulation Mode' : 'Live Outlook Mode'}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm border-slate-200 dark:border-slate-800">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="outlookSimulation" className="font-semibold text-sm">Simulation Mode</Label>
+                      <p className="text-xs text-muted-foreground">Run on simulated email feed for local testing.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      id="outlookSimulation"
+                      checked={outlookSettings.outlookSimulation}
+                      onChange={(e) => setOutlookSettings({ ...outlookSettings, outlookSimulation: e.target.checked })}
+                      className="size-4 rounded accent-emerald-600 cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-lg border p-3 shadow-sm border-slate-200 dark:border-slate-800">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="outlookAutoReply" className="font-semibold text-sm">Auto-Reply</Label>
+                      <p className="text-xs text-muted-foreground">Dispatches the AI-generated reply draft back to the sender.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      id="outlookAutoReply"
+                      checked={outlookSettings.outlookAutoReply}
+                      onChange={(e) => setOutlookSettings({ ...outlookSettings, outlookAutoReply: e.target.checked })}
+                      className="size-4 rounded accent-emerald-600 cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {!outlookSettings.outlookSimulation && (
+                  <div className="space-y-4 border-t border-slate-100 dark:border-slate-800 pt-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="outlookUserEmail">User Email Account</Label>
+                        <Input
+                          id="outlookUserEmail"
+                          value={outlookSettings.outlookUserEmail}
+                          placeholder="e.g. support@yourcompany.com"
+                          onChange={(e) => setOutlookSettings({ ...outlookSettings, outlookUserEmail: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="outlookTenantId">Tenant ID (Directory ID)</Label>
+                        <Input
+                          id="outlookTenantId"
+                          value={outlookSettings.outlookTenantId}
+                          placeholder="e.g. 2b3572af-74d0-4666-ab34-b190713f7b74"
+                          onChange={(e) => setOutlookSettings({ ...outlookSettings, outlookTenantId: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="outlookClientId">Client ID (Application ID)</Label>
+                        <Input
+                          id="outlookClientId"
+                          value={outlookSettings.outlookClientId}
+                          placeholder="e.g. ba01c429-99bb-46bc-a5e5-9c946a727a88"
+                          onChange={(e) => setOutlookSettings({ ...outlookSettings, outlookClientId: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="outlookClientSecret">Client Secret Value</Label>
+                        <Input
+                          id="outlookClientSecret"
+                          type="password"
+                          value={outlookSettings.outlookClientSecret}
+                          placeholder="Paste client secret Value here"
+                          onChange={(e) => setOutlookSettings({ ...outlookSettings, outlookClientSecret: e.target.value })}
+                        />
+                        {outlookSettings.outlookClientSecret && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(outlookSettings.outlookClientSecret) && (
+                          <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 font-medium bg-amber-50 dark:bg-amber-950/40 p-2 rounded border border-amber-200 dark:border-amber-900 leading-normal">
+                            ⚠️ Warning: This looks like a Client Secret <strong>ID</strong> (UUID).
+                            You must enter the Client Secret <strong>Value</strong> (which is a longer random string).
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="outlookAccessToken" className="flex items-center gap-1.5">
+                        Temporary Access Token (Fallback)
+                        <Badge variant="outline" className="text-[10px] font-normal px-1.5 py-0">Delegated Scope</Badge>
+                      </Label>
+                      <Input
+                        id="outlookAccessToken"
+                        value={outlookSettings.outlookAccessToken}
+                        placeholder="Paste a raw access token from Graph Explorer (bypasses client credentials if set)"
+                        onChange={(e) => setOutlookSettings({ ...outlookSettings, outlookAccessToken: e.target.value })}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Use this to test or bypass application permission requirements. Expires in 24 hours.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <NumberField
+                    label="Polling Interval (seconds)"
+                    value={outlookSettings.outlookPollIntervalSeconds}
+                    onChange={(v) => setOutlookSettings({ ...outlookSettings, outlookPollIntervalSeconds: v })}
+                    min={5}
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 border-t border-slate-100 dark:border-slate-800 pt-4 justify-between flex-wrap">
+                  <div className="text-xs">
+                    {outlookTestResult && (
+                      <span className={outlookTestResult.ok ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-rose-600 dark:text-rose-400 font-semibold"}>
+                        {outlookTestResult.ok 
+                          ? `✓ Connected: ${outlookTestResult.user?.displayName || 'Success'} (${outlookTestResult.user?.mail || ''})` 
+                          : `✗ Test failed: ${outlookTestResult.error || 'Connection error'}`
+                        }
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleTestOutlook()}
+                    disabled={testingOutlook}
+                    className="border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                  >
+                    {testingOutlook ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" />
+                        Testing Connection...
+                      </>
+                    ) : (
+                      'Test Connection'
+                    )}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
     </div>

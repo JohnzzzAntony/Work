@@ -9,28 +9,27 @@
 import dotenv from 'dotenv'
 import path from 'path'
 
-// Load environment variables from the root .env file
-dotenv.config({ path: path.join(__dirname, '../../.env') })
+function reloadEnv() {
+  // Clear any existing outlook env vars from process.env
+  delete process.env.OUTLOOK_SIMULATION
+  delete process.env.OUTLOOK_TENANT_ID
+  delete process.env.OUTLOOK_CLIENT_ID
+  delete process.env.OUTLOOK_CLIENT_SECRET
+  delete process.env.OUTLOOK_USER_EMAIL
+  delete process.env.OUTLOOK_ACCESS_TOKEN
+  delete process.env.OUTLOOK_AUTO_REPLY
+  delete process.env.OUTLOOK_POLL_INTERVAL_SECONDS
 
-const POLL_INTERVAL_MS = (parseInt(process.env.OUTLOOK_POLL_INTERVAL_SECONDS || '30', 10) || 30) * 1000
-const AUTO_REPLY = process.env.OUTLOOK_AUTO_REPLY === 'true'
-const IS_SIMULATION =
-  process.env.OUTLOOK_SIMULATION === 'true' ||
-  !process.env.OUTLOOK_CLIENT_ID ||
-  !process.env.OUTLOOK_CLIENT_SECRET ||
-  !process.env.OUTLOOK_TENANT_ID ||
-  !process.env.OUTLOOK_USER_EMAIL
+  dotenv.config({ path: path.join(__dirname, '../../.env'), override: true })
+}
 
-const CRON_KEY = process.env.RENEWAL_CRON_KEY || 'workflowhub-renewal-cron'
-const WEBAPP_URL = process.env.NEXTAUTH_URL || 'http://localhost:3000'
+function getWebappUrl(): string {
+  return (process.env.NEXTAUTH_URL || 'http://localhost:3000').replace('localhost', '127.0.0.1')
+}
 
-const SIMULATED_SENDER_EMAILS = [
-  'support-req@duall-logistics.com',
-  'billing-issue@flowerdistrict.com',
-  'operations@karjistore.com',
-  'system-alerts@megh-tech.com',
-  'vendor-portal@digital.ae'
-]
+function getCronKey(): string {
+  return process.env.RENEWAL_CRON_KEY || 'workflowhub-renewal-cron'
+}
 
 const MOCK_EMAILS = [
   {
@@ -82,7 +81,17 @@ function cleanHtml(html: string): string {
     .trim()
 }
 
+function isUserToken(): boolean {
+  const manualToken = process.env.OUTLOOK_ACCESS_TOKEN
+  return !!(manualToken && manualToken.trim().length > 0)
+}
+
 async function getAccessToken(): Promise<string> {
+  const manualToken = process.env.OUTLOOK_ACCESS_TOKEN
+  if (manualToken && manualToken.trim().length > 0) {
+    return manualToken.trim()
+  }
+
   const tenantId = process.env.OUTLOOK_TENANT_ID!
   const clientId = process.env.OUTLOOK_CLIENT_ID!
   const clientSecret = process.env.OUTLOOK_CLIENT_SECRET!
@@ -107,10 +116,11 @@ async function getAccessToken(): Promise<string> {
   return data.access_token
 }
 
-async function fetchUnreadMessages(accessToken: string): Promise<any[]> {
+async function fetchUnreadMessages(accessToken: string, isUser: boolean): Promise<any[]> {
   const userEmail = process.env.OUTLOOK_USER_EMAIL!
-  // Filter for unread messages, oldest first
-  const url = `https://graph.microsoft.com/v1.0/users/${userEmail}/messages?$filter=isRead eq false&$orderby=receivedDateTime asc&$top=10`
+  const url = isUser
+    ? `https://graph.microsoft.com/v1.0/me/messages?$filter=isRead eq false&$orderby=receivedDateTime asc&$top=10`
+    : `https://graph.microsoft.com/v1.0/users/${userEmail}/messages?$filter=isRead eq false&$orderby=receivedDateTime asc&$top=10`
   
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -124,9 +134,11 @@ async function fetchUnreadMessages(accessToken: string): Promise<any[]> {
   return data.value || []
 }
 
-async function markMessageRead(accessToken: string, messageId: string): Promise<void> {
+async function markMessageRead(accessToken: string, messageId: string, isUser: boolean): Promise<void> {
   const userEmail = process.env.OUTLOOK_USER_EMAIL!
-  const url = `https://graph.microsoft.com/v1.0/users/${userEmail}/messages/${messageId}`
+  const url = isUser
+    ? `https://graph.microsoft.com/v1.0/me/messages/${messageId}`
+    : `https://graph.microsoft.com/v1.0/users/${userEmail}/messages/${messageId}`
   
   const res = await fetch(url, {
     method: 'PATCH',
@@ -142,9 +154,11 @@ async function markMessageRead(accessToken: string, messageId: string): Promise<
   }
 }
 
-async function sendReply(accessToken: string, messageId: string, replyText: string): Promise<void> {
+async function sendReply(accessToken: string, messageId: string, replyText: string, isUser: boolean): Promise<void> {
   const userEmail = process.env.OUTLOOK_USER_EMAIL!
-  const url = `https://graph.microsoft.com/v1.0/users/${userEmail}/messages/${messageId}/reply`
+  const url = isUser
+    ? `https://graph.microsoft.com/v1.0/me/messages/${messageId}/reply`
+    : `https://graph.microsoft.com/v1.0/users/${userEmail}/messages/${messageId}/reply`
 
   const res = await fetch(url, {
     method: 'POST',
@@ -166,7 +180,7 @@ async function ingestToWebapp(
   subject: string,
   body: string
 ): Promise<any> {
-  const targetUrl = `${WEBAPP_URL}/api/email/incoming?key=${CRON_KEY}`
+  const targetUrl = `${getWebappUrl()}/api/email/incoming?key=${getCronKey()}`
   const res = await fetch(targetUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -180,38 +194,12 @@ async function ingestToWebapp(
   return await res.json()
 }
 
-async function markReplySentInWebapp(taskId: string): Promise<void> {
-  // We mock a request from the admin or trigger the PATCH /api/tasks/:id route.
-  // Note: the PATCH task route requires requireUser() which checks cookies.
-  // Since we are running in the background, we can patch the database directly or
-  // we can use the RENEWAL_CRON_KEY to hit a custom internal route.
-  // Wait, let's check if PATCH tasks requires admin session. Yes it does!
-  // To bypass, we can make it hit a special query parameter, or let the webapp route
-  // support cron key, OR since we have Prisma database access on the local filesystem,
-  // we can import Prisma client or write to db if we were sharing.
-  // Actually, we can hit `/api/cron/run-all` or we can implement an internal endpoint or
-  // just let the incoming email endpoint handle database creation, and if auto-reply is enabled
-  // and succeeds, mark it sent.
-  // Wait! If the daemon does the auto-reply, it can just let the webapp know.
-  // Let's check: Can we just support passing a bypass key to PATCH task or update it directly?
-  // Let's implement database updating directly using a simple query or let's update it in Next.js.
-  // Actually, if we update it in Next.js, it's easier. But wait, if the daemon is running in Bun,
-  // it has direct access to the database using Prisma!
-  // But wait, importing the Prisma client in a separate Bun process might conflict with SQLite/Postgres.
-  // Actually, let's look at `index.ts` of notif-service: it doesn't use Prisma, it is lightweight.
-  // To keep it simple, we can support updating the database via a PATCH /api/tasks/:id route that allows
-  // authorization via `key=<CRON_SHARED_KEY>`. Let's check if the current task PATCH endpoint supports cron auth.
-  // No, `src/app/api/tasks/[id]/route.ts` only does `requireUser()`.
-  // Wait, we can modify the task PATCH endpoint to support `requireCronOrAdmin` instead of `requireUser()`!
-  // That is incredibly elegant and allows our daemon to PATCH the task directly!
-  // Yes! Let's do that.
-}
-
-async function processOutlookEmails(): Promise<void> {
+async function processOutlookEmails(autoReply: boolean): Promise<void> {
   console.log(`[outlook-service] Polling Outlook inbox at ${new Date().toISOString()}...`)
   try {
     const token = await getAccessToken()
-    const messages = await fetchUnreadMessages(token)
+    const isUser = isUserToken()
+    const messages = await fetchUnreadMessages(token, isUser)
 
     if (messages.length === 0) {
       console.log('[outlook-service] No new unread emails.')
@@ -234,17 +222,17 @@ async function processOutlookEmails(): Promise<void> {
       console.log(`[outlook-service] Created task: ${result.task?.id} (${result.task?.title})`)
 
       // 2. Mark email as read in Outlook
-      await markMessageRead(token, msg.id)
+      await markMessageRead(token, msg.id, isUser)
       console.log(`[outlook-service] Marked email ${msg.id} as read in Outlook.`)
 
       // 3. Auto-reply if enabled
-      if (AUTO_REPLY && result.replyDraft) {
+      if (autoReply && result.replyDraft) {
         console.log(`[outlook-service] Sending auto-reply to ${senderEmail}...`)
-        await sendReply(token, msg.id, result.replyDraft)
+        await sendReply(token, msg.id, result.replyDraft, isUser)
         console.log('[outlook-service] Auto-reply sent successfully.')
 
         // Mark reply sent in Next.js webapp
-        const patchUrl = `${WEBAPP_URL}/api/tasks/${result.task.id}?key=${CRON_KEY}`
+        const patchUrl = `${getWebappUrl()}/api/tasks/${result.task.id}?key=${getCronKey()}`
         const patchRes = await fetch(patchUrl, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -262,11 +250,9 @@ async function processOutlookEmails(): Promise<void> {
   }
 }
 
-async function processSimulatedEmails(): Promise<void> {
+async function processSimulatedEmails(autoReply: boolean): Promise<void> {
   console.log(`[outlook-service] [SIMULATION] Checking mock mailbox at ${new Date().toISOString()}...`)
   
-  // We automatically ingest a simulated email every 3 intervals to not overflow the board too quickly,
-  // or on-demand via the dashboard simulation button.
   simulationCounter++
   if (simulationCounter % 3 !== 0) {
     return
@@ -287,12 +273,12 @@ async function processSimulatedEmails(): Promise<void> {
 
     console.log(`[outlook-service] [SIMULATION] Task created: ${result.task?.id} (${result.task?.title})`)
 
-    if (AUTO_REPLY && result.replyDraft) {
+    if (autoReply && result.replyDraft) {
       console.log(`[outlook-service] [SIMULATION] Sending auto-reply to ${mockEmail.senderEmail}...`)
       console.log(`[outlook-service] [SIMULATION] Reply text:\n${result.replyDraft}`)
 
       // Mark reply sent in Next.js webapp
-      const patchUrl = `${WEBAPP_URL}/api/tasks/${result.task.id}?key=${CRON_KEY}`
+      const patchUrl = `${getWebappUrl()}/api/tasks/${result.task.id}?key=${getCronKey()}`
       const patchRes = await fetch(patchUrl, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -310,29 +296,34 @@ async function processSimulatedEmails(): Promise<void> {
 }
 
 async function main() {
-  if (IS_SIMULATION) {
-    console.log('==================================================================')
-    console.log('  OUTLOOK INTEGRATION SERVICE RUNNING IN [SIMULATION MODE]         ')
-    console.log('  - Simulated mock emails will arrive automatically periodically  ')
-    console.log('  - Real-time ingestion is supported via API triggers            ')
-    console.log('==================================================================')
-  } else {
-    console.log('==================================================================')
-    console.log('  OUTLOOK INTEGRATION SERVICE RUNNING IN [LIVE OUTLOOK MODE]      ')
-    console.log(`  - Mailbox: ${process.env.OUTLOOK_USER_EMAIL}                    `)
-    console.log(`  - Tenant ID: ${process.env.OUTLOOK_TENANT_ID}                  `)
-    console.log(`  - Client ID: ${process.env.OUTLOOK_CLIENT_ID}                  `)
-    console.log('==================================================================')
-  }
+  console.log('==================================================================')
+  console.log('  OUTLOOK INTEGRATION SERVICE STARTED                             ')
+  console.log('  - Environment variables will reload dynamically on every poll   ')
+  console.log('==================================================================')
 
   // Poll loop
   while (true) {
-    if (IS_SIMULATION) {
-      await processSimulatedEmails()
+    reloadEnv()
+
+    // evaluate modes dynamically on each tick
+    const hasManualToken = !!(process.env.OUTLOOK_ACCESS_TOKEN && process.env.OUTLOOK_ACCESS_TOKEN.trim().length > 0)
+    const isSimulation =
+      process.env.OUTLOOK_SIMULATION === 'true' ||
+      (!hasManualToken &&
+        (!process.env.OUTLOOK_CLIENT_ID ||
+          !process.env.OUTLOOK_CLIENT_SECRET ||
+          !process.env.OUTLOOK_TENANT_ID ||
+          !process.env.OUTLOOK_USER_EMAIL))
+
+    const autoReply = process.env.OUTLOOK_AUTO_REPLY === 'true'
+    const pollIntervalMs = (parseInt(process.env.OUTLOOK_POLL_INTERVAL_SECONDS || '30', 10) || 30) * 1000
+
+    if (isSimulation) {
+      await processSimulatedEmails(autoReply)
     } else {
-      await processOutlookEmails()
+      await processOutlookEmails(autoReply)
     }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
   }
 }
 

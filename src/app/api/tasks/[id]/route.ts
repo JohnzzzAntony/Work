@@ -338,6 +338,15 @@ export async function PATCH(
       }
     }
 
+    // --- replySent ---
+    if (typeof body.replySent === 'boolean' && body.replySent !== existing.replySent) {
+      data.replySent = body.replySent
+      logs.push({
+        actionType: 'reply_sent_change',
+        content: body.replySent ? 'Auto-reply sent' : 'Auto-reply status reset',
+      })
+    }
+
     const updated = await db.task.update({ where: { id }, data, include: TASK_INCLUDES })
 
     // Write activity logs (referencing the assignee snapshot if needed)
