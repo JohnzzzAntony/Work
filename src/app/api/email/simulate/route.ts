@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireCronOrAdmin } from '@/lib/auth'
-import { apiCatch, jsonError } from '@/lib/api-helpers'
+import { apiCatch } from '@/lib/api-helpers'
+import { ingestIncomingEmail } from '@/lib/email-ingest'
 
 const MOCK_EMAILS = [
   {
@@ -44,31 +45,9 @@ export async function POST(request: Request) {
     const randomIndex = Math.floor(Math.random() * MOCK_EMAILS.length)
     const mockEmail = MOCK_EMAILS[randomIndex]
 
-    // Construct local URL to /api/email/incoming with cron key auth
-    const cronKey = process.env.RENEWAL_CRON_KEY || 'workflowhub-renewal-cron'
-    const targetUrl = `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/email/incoming?key=${cronKey}`
+    // Ingest the email directly (bypassing localhost HTTP network request loop)
+    const result = await ingestIncomingEmail(mockEmail)
 
-    // Post to the incoming endpoint
-    const response = await fetch(targetUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        senderEmail: mockEmail.senderEmail,
-        senderName: mockEmail.senderName,
-        subject: mockEmail.subject,
-        body: mockEmail.body
-      })
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error('[email-simulation] Ingestion failed:', errorText)
-      return jsonError(`Simulation ingestion failed: ${response.statusText}`, 500)
-    }
-
-    const result = await response.json()
     return NextResponse.json({
       ok: true,
       simulated: mockEmail,
