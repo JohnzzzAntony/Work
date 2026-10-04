@@ -1,0 +1,15 @@
+.git
+node_modules
+.next
+.env*
+*.log
+*.tsbuildinfo
+next-env.d.ts
+.claude
+.zscripts
+db
+upload
+download
+tool-results
+examples
+mini-services
