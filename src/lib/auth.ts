@@ -101,16 +101,28 @@ export async function requireCronOrAdmin(request: Request) {
   } catch {
     // fall through to shared-secret check
   }
-  try {
-    const url = new URL(request.url)
-    const key = url.searchParams.get('key')
-    if (typeof key === 'string' && key.length > 0 && key === CRON_SHARED_KEY) {
-      return null
-    }
-  } catch {
-    /* ignore URL parse errors */
-  }
+  if (hasCronKey(request)) return null
   throw new Error('UNAUTHORIZED')
+}
+
+/**
+ * Like requireCronOrAdmin, but any logged-in user (admin or employee) passes
+ * the session path. Callers must still enforce per-resource permissions.
+ */
+export async function requireUserOrCron(request: Request) {
+  const user = await getCurrentUser()
+  if (user) return user
+  if (hasCronKey(request)) return null
+  throw new Error('UNAUTHORIZED')
+}
+
+function hasCronKey(request: Request) {
+  try {
+    const key = new URL(request.url).searchParams.get('key')
+    return typeof key === 'string' && key.length > 0 && key === CRON_SHARED_KEY
+  } catch {
+    return false
+  }
 }
 
 // Type for the safe user object returned to the client (no passwordHash)

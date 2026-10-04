@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireAdmin, requireUser, requireCronOrAdmin } from '@/lib/auth'
+import { requireAdmin, requireUser, requireUserOrCron } from '@/lib/auth'
 import {
   apiCatch,
   jsonError,
@@ -98,8 +98,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const cronUser = await requireCronOrAdmin(request)
-    const currentUser = cronUser
+    const currentUser = await requireUserOrCron(request)
     const isSystem = !currentUser
     const userId = currentUser?.id || null
     const userName = currentUser?.name || 'System'
