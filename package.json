@@ -10,10 +10,11 @@
     "build": "prisma generate && next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/",
     "start": "cross-env NODE_ENV=production HOSTNAME=0.0.0.0 PORT=$PORT node .next/standalone/server.js",
     "lint": "eslint .",
-    "db:push": "prisma db push",
+    "db:push": "prisma db push && prisma db execute --file prisma/supabase-rls.sql --schema prisma/schema.prisma",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "db:seed": "bun run scripts/seed.ts"
   },
   "dependencies": {
     "@azure/msal-node": "^5.3.1",
