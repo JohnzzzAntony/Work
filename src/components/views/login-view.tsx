@@ -21,8 +21,8 @@ import type { UserDTO } from '@/lib/types'
 
 export function LoginView() {
   const setUser = useAppStore((s) => s.setUser)
-  const [email, setEmail] = React.useState('admin@workflowhub.com')
-  const [password, setPassword] = React.useState('admin123')
+  const [email, setEmail] = React.useState('')
+  const [password, setPassword] = React.useState('')
   const [submitting, setSubmitting] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
@@ -117,14 +117,6 @@ export function LoginView() {
                   </>
                 )}
               </Button>
-              <p className="text-xs text-muted-foreground text-center leading-relaxed">
-                Demo admin:{' '}
-                <span className="font-medium text-foreground">admin@workflowhub.com</span> /{' '}
-                <span className="font-medium text-foreground">admin123</span>
-                <br />
-                Employees: john/asha/liz/raj @workflowhub.com /{' '}
-                <span className="font-medium text-foreground">emp123</span>
-              </p>
             </CardFooter>
           </form>
         </Card>
